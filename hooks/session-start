@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# SessionStart hook for devops-mutant-powers plugin
+
+set -euo pipefail
+
+# Bash builtins only, no PATH lookups: the hook can start with a broken or empty PATH
+# (anthropics/claude-code#43127). Split $0 on its last / or \ (run-hook.cmd passes Windows paths).
+case "$0" in
+  */*|*\\*) SCRIPT_DIR="$(cd "${0%[/\\]*}" && pwd)" ;;
+  *) SCRIPT_DIR="$(pwd)" ;;
+esac
+PLUGIN_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+skill_md="${PLUGIN_ROOT}/skills/using-devops-mutant-powers/SKILL.md"
+if [ -r "$skill_md" ]; then
+  using_skill_content="$(<"$skill_md")"
+else
+  using_skill_content="Error reading using-devops-mutant-powers skill"
+fi
+
+escape_for_json() {
+    local s="$1"
+    s="${s//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    s="${s//$'\n'/\\n}"
+    s="${s//$'\r'/\\r}"
+    s="${s//$'\t'/\\t}"
+    printf '%s' "$s"
+}
+
+# Build marker: lets verification prove which build was loaded (version, plus git SHA when the clone has .git).
+version=""
+manifest="${PLUGIN_ROOT}/.claude-plugin/plugin.json"
+version_re='"version"[[:space:]]*:[[:space:]]*"([^"]+)"'
+if [ -r "$manifest" ] && [[ "$(<"$manifest")" =~ $version_re ]]; then
+  version="${BASH_REMATCH[1]}"
+fi
+sha=""
+# Only the plugin's own clone: an enclosing repo (or a cached copy without .git) must not supply a SHA.
+if command -v git >/dev/null 2>&1 &&
+  [ "$(git -C "${PLUGIN_ROOT}" rev-parse --show-toplevel 2>/dev/null || true)" = "$(cd "${PLUGIN_ROOT}" && pwd -P)" ]; then
+  sha=$(git -C "${PLUGIN_ROOT}" rev-parse --short HEAD 2>/dev/null || true)
+fi
+marker="devops-mutant-powers v${version:-unknown}${sha:+ (${sha})}"
+
+escaped=$(escape_for_json "$using_skill_content")
+session_context="<EXTREMELY_IMPORTANT>\nYou have ${marker}.\n\n**Below is the full content of your 'using-devops-mutant-powers' skill. For all other skills, use the Skill tool:**\n\n${escaped}\n</EXTREMELY_IMPORTANT>"
+
+# printf through cat when cat exists (absorbs EPIPE on Windows Git Bash); printf alone when PATH is broken.
+# printf, not a heredoc: bash 5.3+ heredocs can hang (obra/superpowers issue 571).
+emit_json() {
+  # shellcheck disable=SC2059 # every caller passes a literal format string
+  if command -v cat >/dev/null 2>&1; then
+    printf "$@" | cat
+  else
+    printf "$@"
+  fi
+}
+
+# Emit exactly one field: Claude Code reads additional_context and hookSpecificOutput alike, so two would inject twice.
+if [ -n "${CURSOR_PLUGIN_ROOT:-}" ]; then
+  # Cursor (may also set CLAUDE_PLUGIN_ROOT): snake_case additional_context.
+  emit_json '{\n  "additional_context": "%s"\n}\n' "$session_context"
+elif [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -z "${COPILOT_CLI:-}" ]; then
+  # Claude Code: nested hookSpecificOutput.additionalContext.
+  emit_json '{\n  "hookSpecificOutput": {\n    "hookEventName": "SessionStart",\n    "additionalContext": "%s"\n  }\n}\n' "$session_context"
+else
+  # Copilot CLI (COPILOT_CLI=1) and unknown harnesses: top-level additionalContext (SDK standard).
+  emit_json '{\n  "additionalContext": "%s"\n}\n' "$session_context"
+fi
+
+exit 0

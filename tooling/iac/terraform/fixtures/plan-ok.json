@@ -1,0 +1,54 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.8",
+  "planned_values": { "root_module": {} },
+  "resource_drift": [],
+  "resource_changes": [
+    {
+      "address": "data.aws_ami.base",
+      "mode": "data",
+      "type": "aws_ami",
+      "name": "base",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": { "actions": ["read"], "before": null, "after": {}, "after_unknown": {} },
+      "action_reason": "read_because_config_unknown"
+    },
+    {
+      "address": "aws_instance.app",
+      "mode": "managed",
+      "type": "aws_instance",
+      "name": "app",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["update"],
+        "before": { "tags": { "env": "staging" } },
+        "after": { "tags": { "env": "staging", "owner": "team-a" } },
+        "after_unknown": {}
+      }
+    },
+    {
+      "address": "aws_security_group_rule.https_in",
+      "mode": "managed",
+      "type": "aws_security_group_rule",
+      "name": "https_in",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": { "from_port": 443, "to_port": 443, "cidr_blocks": ["203.0.113.0/24"] },
+        "after_unknown": { "id": true }
+      }
+    },
+    {
+      "address": "aws_s3_bucket.logs",
+      "mode": "managed",
+      "type": "aws_s3_bucket",
+      "name": "logs",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": { "actions": ["no-op"], "before": {}, "after": {}, "after_unknown": {} }
+    }
+  ],
+  "errored": false,
+  "applyable": true,
+  "complete": true
+}

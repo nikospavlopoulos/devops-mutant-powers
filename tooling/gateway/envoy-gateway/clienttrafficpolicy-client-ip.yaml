@@ -1,0 +1,21 @@
+# Recover the real client IP at the Gateway: required before any IP allowlist or per-client rate limit.
+# Pick ONE method per Gateway; prove it on a canary host (README.md) before allowlists depend on it. Shared clusters: human approval.
+# Guidance: skills/reverse-proxy/references/envoy-gateway.md (section 2)
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: ClientTrafficPolicy
+metadata:
+  name: eg-client-ip                             # CHANGE: one per Gateway
+  namespace: envoy-gateway-system                # CHANGE: must equal the Gateway's namespace
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: eg                                   # CHANGE: your Gateway
+  # Method A: a CDN or L7 load balancer in front sets X-Forwarded-For.
+  clientIPDetection:
+    xForwardedFor:
+      numTrustedHops: 1                          # CHANGE: count of trusted proxies that append to XFF (CDN only = 1; CDN + cloud L7 LB = 2)
+      # trustedCIDRs: [192.0.2.0/24]             # CHANGE: alternative to numTrustedHops (not both): proxy egress ranges
+  # Method B: an L4 load balancer sends the PROXY protocol header (enable it on the LB in the same change window).
+  # Remove clientIPDetection above and uncomment:
+  # proxyProtocol: {}                            # every connection must carry the header; optional: true breaks the spec

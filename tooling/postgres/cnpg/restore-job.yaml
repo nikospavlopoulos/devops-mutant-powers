@@ -1,0 +1,206 @@
+# Restore a validated dump into a NEW, throwaway database, owned by the app owner, with clients kept out.
+# Restoring over a live database needs explicit approval and the in-place procedure (skill: dump-restore reference).
+# Apply order: ConfigMap + Database first (wait for the Database to be applied), then the Job.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-a-grants # CHANGE
+  namespace: <ns> # CHANGE
+data:
+  # Idempotent; re-run after every restore. CONNECT is granted by hand only after verification.
+  grants.sql: |
+    CREATE SCHEMA IF NOT EXISTS app_a AUTHORIZATION app_a;
+    REVOKE CREATE ON SCHEMA app_a FROM PUBLIC;
+    GRANT USAGE ON SCHEMA app_a TO team_a_ro, team_a_rw;
+    GRANT SELECT ON ALL TABLES IN SCHEMA app_a TO team_a_ro;
+    GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA app_a TO team_a_rw;
+    GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA app_a TO team_a_rw;
+    ALTER DEFAULT PRIVILEGES FOR ROLE app_a GRANT SELECT ON TABLES TO team_a_ro;
+    ALTER DEFAULT PRIVILEGES FOR ROLE app_a GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO team_a_rw;
+    ALTER DEFAULT PRIVILEGES FOR ROLE app_a GRANT USAGE, SELECT ON SEQUENCES TO team_a_rw;
+    ALTER DEFAULT PRIVILEGES FOR ROLE app_a GRANT USAGE ON SCHEMAS TO team_a_ro, team_a_rw;
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database # CNPG >= 1.25
+metadata:
+  name: pg-app-a-restore-check # CHANGE
+  namespace: <ns> # CHANGE: same namespace as the Cluster
+spec:
+  cluster:
+    name: pg-app-a # CHANGE: immutable
+  name: app_a_restore_check # CHANGE: throwaway target, never the live database
+  owner: app_a # CHANGE: restore runs as this role, so it owns every restored object
+  ensure: present
+  databaseReclaimPolicy: delete # deleting this resource drops the throwaway database
+  # extensions: # CNPG >= 1.26: extensions must exist before the restore
+  #   - name: <extension> # CHANGE
+  #     ensure: present
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: pg-restore-app-a # CHANGE: unique per run
+  namespace: <ns> # CHANGE
+  labels:
+    app.kubernetes.io/name: pg-restore-app-a # CHANGE
+spec:
+  backoffLimit: 0 # never re-run a restore into a half-filled database
+  activeDeadlineSeconds: 21600 # CHANGE
+  ttlSecondsAfterFinished: 604800 # CHANGE: keep logs for review
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: pg-restore-app-a # CHANGE
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: fetch
+          image: rclone/rclone:<pinned-version> # CHANGE: pin an exact rclone release
+          env:
+            - name: HOME
+              value: /tmp
+            - name: SRC_PATH
+              value: <bucket>/<prefix>/app_a # CHANGE
+            - name: DUMP_NAME
+              value: app_a-<timestamp>.dump # CHANGE: object written by dump-to-s3-job.yaml
+            - name: RCLONE_CONFIG_SRC_TYPE
+              value: s3
+            - name: RCLONE_CONFIG_SRC_PROVIDER
+              value: Other # CHANGE: AWS for Amazon S3
+            - name: RCLONE_CONFIG_SRC_ENDPOINT
+              value: https://s3.example.com # CHANGE: delete for AWS S3
+            - name: RCLONE_CONFIG_SRC_REGION
+              value: <region> # CHANGE
+            - name: RCLONE_CONFIG_SRC_ENV_AUTH
+              value: "true"
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: pg-dump-s3 # CHANGE: read-only key is enough here
+                  key: ACCESS_KEY_ID
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: pg-dump-s3 # CHANGE
+                  key: ACCESS_SECRET_KEY
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              rclone copyto "src:$SRC_PATH/$DUMP_NAME.complete" /work/restore.dump.complete
+              rclone copyto "src:$SRC_PATH/$DUMP_NAME" /work/restore.dump
+              # a missing object can "copy" nothing with exit 0 on bucket backends: the marker check catches it
+              read -r want_size want_sha < /work/restore.dump.complete
+              got_size=$(wc -c < /work/restore.dump | tr -d ' ')
+              got_sha=$(sha256sum /work/restore.dump | cut -d' ' -f1)
+              if [ "$got_size" != "$want_size" ] || [ "$got_sha" != "$want_sha" ]; then
+                echo "FAIL: download does not match marker (size $got_size/$want_size)" >&2; exit 1
+              fi
+              echo "OK: fetched $DUMP_NAME ($got_size bytes, sha256 verified)"
+          resources:
+            requests:
+              cpu: 250m # CHANGE
+              memory: 128Mi # CHANGE
+            limits:
+              memory: 512Mi # CHANGE
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: work
+              mountPath: /work
+            - name: tmp
+              mountPath: /tmp
+      containers:
+        - name: restore
+          image: ghcr.io/cloudnative-pg/postgresql:18.4-minimal-trixie # CHANGE: >= the pg_dump version that wrote the archive
+          env:
+            - name: PGHOST
+              value: pg-app-a-rw # CHANGE: primary Service of the target Cluster
+            - name: PGPORT
+              value: "5432"
+            - name: PGSSLMODE
+              value: require # CHANGE
+            - name: TARGET_DB
+              value: app_a_restore_check # CHANGE: must equal spec.name of the Database above
+            - name: JOBS
+              value: "4" # CHANGE: parallel restore sessions (<= CPU of the target, within the connection budget)
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -euo pipefail
+              umask 077
+              esc() { sed 's/[\\:]/\\&/g'; }
+              printf '%s:%s:*:%s:%s\n' "$PGHOST" "$PGPORT" \
+                "$(esc < /etc/pg-auth/username)" "$(esc < /etc/pg-auth/password)" > /tmp/pgpass
+              export PGPASSFILE=/tmp/pgpass PGUSER="$(cat /etc/pg-auth/username)"
+              trap 'echo "FAIL near line $LINENO: $TARGET_DB keeps CONNECT revoked from PUBLIC; see /work/restore.log" >&2' ERR
+              psql -X -At -v ON_ERROR_STOP=1 -d "$TARGET_DB" -c 'SELECT current_user, current_database(), version()'
+              n=$(psql -X -At -v ON_ERROR_STOP=1 -d "$TARGET_DB" -c "SELECT count(*) FROM pg_class c JOIN pg_namespace s ON s.oid = c.relnamespace WHERE c.relkind IN ('r','p') AND s.nspname NOT IN ('pg_catalog','information_schema') AND s.nspname NOT LIKE 'pg_toast%'")
+              [ "$n" -eq 0 ] || { echo "FAIL: $TARGET_DB already holds $n tables; refusing to restore over it" >&2; exit 1; }
+              psql -X -v ON_ERROR_STOP=1 -v db="$TARGET_DB" -d "$TARGET_DB" <<'SQL'
+              REVOKE CONNECT ON DATABASE :"db" FROM PUBLIC;
+              SQL
+              pg_restore --list /work/restore.dump > /work/restore.toc
+              rc=0
+              pg_restore -j "$JOBS" --no-owner --no-privileges --no-password -d "$TARGET_DB" /work/restore.dump 2> /work/restore.log || rc=$?
+              tail -n 40 /work/restore.log >&2 || true
+              if [ "$rc" -ne 0 ] || grep -q 'errors ignored on restore' /work/restore.log; then
+                echo "FAIL: pg_restore rc=$rc" >&2; exit 1
+              fi
+              psql -X -v ON_ERROR_STOP=1 -d "$TARGET_DB" -f /sql/grants.sql
+              psql -X -v ON_ERROR_STOP=1 -d "$TARGET_DB" -c 'ANALYZE'
+              psql -X -At -d "$TARGET_DB" -c "SELECT count(*) || ' tables, ' || pg_size_pretty(pg_database_size(current_database())) FROM pg_tables WHERE schemaname NOT IN ('pg_catalog','information_schema')"
+              echo "OK: restored into $TARGET_DB. Verify counts as the app role, then GRANT CONNECT (approval)."
+          resources:
+            requests:
+              cpu: "1" # CHANGE
+              memory: 512Mi # CHANGE
+            limits:
+              memory: 2Gi # CHANGE
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: work
+              mountPath: /work
+            - name: tmp
+              mountPath: /tmp
+            - name: pg-auth
+              mountPath: /etc/pg-auth
+              readOnly: true
+            - name: grants
+              mountPath: /sql
+              readOnly: true
+      volumes:
+        - name: work # holds the downloaded dump; sizing: kubernetes-storage skill
+          ephemeral:
+            volumeClaimTemplate:
+              spec:
+                accessModes: ["ReadWriteOnce"]
+                storageClassName: <storage-class> # CHANGE
+                resources:
+                  requests:
+                    storage: 50Gi # CHANGE: >= dump size
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
+        - name: pg-auth
+          secret:
+            secretName: app-a-owner-credentials # CHANGE: owner role Secret (restore as the owner)
+            defaultMode: 0440
+        - name: grants
+          configMap:
+            name: app-a-grants # CHANGE

@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Privacy + structure gate before anything leaves the machine. Never calls a model or runs evals. The Claude Code
+# plugin validator opens one HTTPS connection to Anthropic and sees only the public files.
+set -uo pipefail
+ROOT="$(git rev-parse --show-toplevel)"
+zero=0000000000000000000000000000000000000000
+fail=0
+pushed=""
+
+remote="${1:-origin}"
+
+while read -r _local_ref local_sha _remote_ref remote_sha; do
+  [ "$local_sha" = "$zero" ] && continue                       # branch deletion
+  if [ "$remote_sha" = "$zero" ]; then                         # new ref: scan only commits the remote lacks
+    base=$(git -C "$ROOT" rev-list --topo-order "$local_sha" --not --remotes="$remote" | tail -1)
+    if [ -z "$base" ]; then range=""                           # e.g. a tag on already-pushed history
+    elif git -C "$ROOT" rev-parse -q --verify "$base^" >/dev/null; then range="$base^..$local_sha"
+    else range="$local_sha"; fi                                # remote has none of it: whole history
+  else range="$remote_sha..$local_sha"; fi
+  [ -z "$range" ] || bash "$ROOT/scripts/scan-sensitive.sh" --range "$range" || fail=1
+  pushed="$pushed $local_sha"
+done
+bash "$ROOT/scripts/scan-sensitive.sh" --tree || fail=1
+for sha in $pushed; do                                         # validate exactly what is being pushed
+  snap=$(mktemp -d)
+  git -C "$ROOT" archive "$sha" | tar -x -C "$snap"
+  python3 -I "$snap/tests/validate.py" || fail=1
+  rm -rf "${snap:?}"
+done
+for sha in $pushed; do                                         # plugin validators on the public files being pushed
+  pub=$(mktemp -d)
+  git -C "$ROOT" archive "$sha" | tar -x -C "$pub"
+  rm -rf "${pub:?}/private" "$pub/.github/workflows/publish.yml"
+  if [ -f "$pub/scripts/check-harness-validators.sh" ]; then bash "$pub/scripts/check-harness-validators.sh" "$pub" || fail=1; fi
+  rm -rf "${pub:?}"
+done
+bash "$ROOT/tests/run-quick.sh" || fail=1
+
+[ "$fail" -eq 0 ] || { echo "pre-push: BLOCKED"; exit 1; }

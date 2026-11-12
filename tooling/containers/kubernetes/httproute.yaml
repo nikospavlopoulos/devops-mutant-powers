@@ -1,0 +1,71 @@
+# Gateway API alternative to ingress.yaml (gateway.networking.k8s.io/v1). TLS terminates on the Gateway listener,
+# so cert-manager (config gatewayAPI.enabled: true) reads its annotation from the Gateway, never from a route.
+# Platform-owned: delete this Gateway when the cluster provides a shared one and point parentRefs at it.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: app-a                                         # CHANGE: gateway name
+  namespace: app-a                                    # CHANGE: namespace
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod  # CHANGE: an existing ClusterIssuer
+spec:
+  gatewayClassName: example-gateway-class             # CHANGE: a GatewayClass that exists (kubectl get gatewayclass)
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      hostname: app.example.com                       # CHANGE: public host
+      allowedRoutes:
+        namespaces:
+          from: Same
+    - name: https
+      protocol: HTTPS
+      port: 443
+      hostname: app.example.com                       # CHANGE: cert-manager needs a non-empty hostname
+      tls:
+        mode: Terminate                               # cert-manager does not support Passthrough
+        certificateRefs:
+          - kind: Secret
+            name: app-a-tls                           # cert-manager creates it in the Gateway's namespace
+      allowedRoutes:
+        namespaces:
+          from: Same                                  # CHANGE: Selector/All for a shared Gateway
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: app-a                                         # CHANGE: app name
+  namespace: app-a                                    # CHANGE: namespace
+spec:
+  parentRefs:
+    - name: app-a                                     # CHANGE: Gateway name (add namespace: for a shared Gateway)
+      sectionName: https
+  hostnames:
+    - app.example.com                                 # CHANGE: must match the listener hostname
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: app-a                                 # CHANGE: Service from service.yaml
+          port: 80                                    # the Service port, not the container port
+---
+# Plain HTTP only redirects; it never reaches the app.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: app-a-redirect                                # CHANGE: app name
+  namespace: app-a                                    # CHANGE: namespace
+spec:
+  parentRefs:
+    - name: app-a                                     # CHANGE: Gateway name
+      sectionName: http
+  hostnames:
+    - app.example.com                                 # CHANGE
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            statusCode: 301

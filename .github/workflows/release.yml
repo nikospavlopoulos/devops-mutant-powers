@@ -1,0 +1,38 @@
+name: release
+
+# Tag and publish a GitHub release when a release/* pull request is merged into main.
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    if: >-
+      github.repository == 'nikospavlopoulos/devops-mutant-powers' &&
+      github.event.pull_request.merged &&
+      startsWith(github.event.pull_request.head.ref, 'release/')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+    steps:
+      - name: Check out the merge commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          persist-credentials: false
+
+      - name: Create the release
+        run: |
+          set -euo pipefail
+          VERSION="$(jq -r .version .claude-plugin/plugin.json)"
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "bad plugin version" >&2; exit 1; }
+          notes="$RUNNER_TEMP/notes.md"
+          awk -v h="## [${VERSION}]" 'index($0,h)==1{f=1;next} /^## /{f=0} f' CHANGELOG.md > "$notes"
+          [ -s "$notes" ] || { echo "no CHANGELOG section for ${VERSION}" >&2; exit 1; }
+          gh release create "v${VERSION}" --target "$MERGE_SHA" --title "v${VERSION}" --notes-file "$notes"

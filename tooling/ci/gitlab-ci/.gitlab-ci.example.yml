@@ -1,0 +1,91 @@
+# GitLab CI example: test -> build -> scan -> deploy. Copy to .gitlab-ci.yml and edit every "# CHANGE:".
+# Behaviour that bites (protected variables, tag deploys, rules): skills/ci-cd-pipeline/references/gitlab-ci.md.
+
+include:
+  - local: ci/gitlab-ci-scan.yml                  # CHANGE: your copy of tooling/security/scanning/gitlab-ci-scan.yml
+
+stages: [test, build, scan, deploy]
+
+# A pipeline that matches no rule is not created: keep every pipeline type you rely on.
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_TAG
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+variables:
+  IMAGE: $CI_REGISTRY_IMAGE                       # CHANGE: target repository in the project's registry
+
+default:
+  interruptible: true                             # a newer pipeline on the same ref may cancel this one
+
+test:
+  stage: test
+  image: node:24.21.0-alpine3.24                  # CHANGE: toolchain image, pinned
+  cache:
+    key:
+      files: [package-lock.json]
+    paths: [.npm/]
+  script:
+    - npm ci --cache .npm --prefer-offline
+    - npm run lint --if-present
+    - npm test
+    - npm run build --if-present                  # a production build catches dev-only imports
+
+build-image:
+  stage: build
+  image: docker:29.8.2-cli
+  services:
+    - docker:29.8.2-dind                          # needs a privileged runner (gitlab-ci reference, "Building images")
+  variables:
+    DOCKER_HOST: tcp://docker:2376
+    DOCKER_TLS_CERTDIR: "/certs"
+  before_script:
+    - echo "$CI_REGISTRY_PASSWORD" | docker login "$CI_REGISTRY" -u "$CI_REGISTRY_USER" --password-stdin
+  script:
+    - docker build --pull -t "$IMAGE:$CI_COMMIT_SHA" .
+    - docker push "$IMAGE:$CI_COMMIT_SHA"
+    # Later jobs use the digest, so a re-pushed tag can never change what is scanned or deployed.
+    - echo "IMAGE_REF=$(docker inspect --format '{{index .RepoDigests 0}}' "$IMAGE:$CI_COMMIT_SHA")" > build.env
+  artifacts:
+    reports:
+      dotenv: build.env
+
+container-scan:
+  stage: scan
+  image:
+    name: aquasec/trivy:0.75.0@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa  # CHANGE
+    entrypoint: [""]
+  needs: [build-image]
+  variables:
+    TRIVY_USERNAME: $CI_REGISTRY_USER
+    TRIVY_PASSWORD: $CI_REGISTRY_PASSWORD
+    TRIVY_CACHE_DIR: .trivycache/
+  cache:
+    key: trivy-db
+    paths: [.trivycache/]
+  script:
+    - trivy image --config trivy.yaml "$IMAGE_REF"   # trivy.yaml: copy of tooling/security/scanning/trivy.yaml
+
+deploy-production:
+  stage: deploy
+  # registry.k8s.io/kubectl has no shell; build a thin tools image (README) and pin it by digest.
+  image: registry.example.com/tools/kubectl:1.37.1  # CHANGE
+  needs: [build-image, container-scan, secret-scan, dependency-scan]
+  interruptible: false                            # never cancel a rollout halfway
+  resource_group: production                      # one deploy at a time
+  environment:
+    name: production
+    url: https://app.example.com                  # CHANGE
+  variables:
+    NAMESPACE: app-a                              # CHANGE
+    DEPLOYMENT: app-a                             # CHANGE
+    CONTAINER: app                                # CHANGE: container name in the Deployment
+  # KUBECONFIG: protected, file-type variable scoped to "production" (a namespaced deployer, not cluster-admin).
+  # It is empty on unprotected refs by design; protect the v* tag pattern so tag pipelines receive it.
+  script:
+    - kubectl -n "$NAMESPACE" set image "deployment/$DEPLOYMENT" "$CONTAINER=$IMAGE_REF"
+    - kubectl -n "$NAMESPACE" rollout status "deployment/$DEPLOYMENT" --timeout=5m
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/    # CHANGE: release tag pattern
+      when: manual                                # inside rules: the pipeline waits ("blocked") instead of passing

@@ -1,0 +1,13 @@
+gantt
+    title Gateway cutover for shop.example.com
+    dateFormat HH:mm
+    axisFormat %H:%M
+    section DNS
+    Lower TTL to 60 s (an hour before)   :done, ttl, 09:00, 10m
+    Switch A record to 192.0.2.40         :crit, sw, 10:00, 5m
+    section Proof
+    Curl through the new gateway first     :pre, 09:45, 15m
+    Check public DNS and real traffic      :after sw, 20m
+    section Rollback window
+    Old ingress kept serving               :active, keep, 10:00, 60m
+    Point of no return (old ingress off)   :milestone, crit, 11:00, 0m

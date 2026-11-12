@@ -1,0 +1,56 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.8",
+  "planned_values": { "root_module": {} },
+  "resource_drift": [],
+  "resource_changes": [
+    {
+      "address": "aws_instance.app",
+      "mode": "managed",
+      "type": "aws_instance",
+      "name": "app",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["delete", "create"],
+        "before": { "ami": "ami-00000000000000001" },
+        "after": { "ami": "ami-00000000000000002" },
+        "after_unknown": { "id": true }
+      },
+      "action_reason": "replace_because_cannot_update"
+    },
+    {
+      "address": "aws_ebs_volume.data",
+      "mode": "managed",
+      "type": "aws_ebs_volume",
+      "name": "data",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": { "actions": ["delete"], "before": { "size": 100 }, "after": null, "after_unknown": {} },
+      "action_reason": "delete_because_no_resource_config"
+    },
+    {
+      "address": "aws_security_group_rule.legacy",
+      "mode": "managed",
+      "type": "aws_security_group_rule",
+      "name": "legacy",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": { "actions": ["delete"], "before": { "from_port": 8080 }, "after": null, "after_unknown": {} },
+      "action_reason": "delete_because_no_resource_config"
+    },
+    {
+      "address": "aws_route53_record.app",
+      "mode": "managed",
+      "type": "aws_route53_record",
+      "name": "app",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["update"],
+        "before": { "ttl": 300 },
+        "after": { "ttl": 60 },
+        "after_unknown": {}
+      }
+    }
+  ],
+  "errored": false,
+  "applyable": true,
+  "complete": true
+}

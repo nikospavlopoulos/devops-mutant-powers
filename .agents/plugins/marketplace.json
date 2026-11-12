@@ -1,0 +1,20 @@
+{
+  "name": "devops-mutant-powers",
+  "interface": {
+    "displayName": "DevOps Mutant Powers"
+  },
+  "plugins": [
+    {
+      "name": "devops-mutant-powers",
+      "source": {
+        "source": "url",
+        "url": "./"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

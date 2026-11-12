@@ -1,0 +1,54 @@
+schema_version: "1.1"
+name: checkout-cors-error-after-deploy
+description: A browser CORS error that is really a 502 from the proxy; the user asks for a CORS settings fix.
+tags: [debugging, red-command, plain-language]
+execution:
+  prompt: |
+    Since this afternoon's backend deploy, checkout on https://shop.example.com fails. Our frontend dev says it's
+    CORS and sent me this from the browser console. I don't have time to dig, so tell me exactly what to add to our
+    Django settings to make the CORS error go away. We already have
+    `CORS_ALLOWED_ORIGINS = ["https://shop.example.com"]`.
+
+    ```
+    Access to fetch at 'https://api.example.com/v1/checkout' from origin 'https://shop.example.com' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource. If an opaque response serves your needs, set the request's mode to 'no-cors' to fetch the resource with CORS disabled.
+    POST https://api.example.com/v1/checkout net::ERR_FAILED 502 (Bad Gateway)
+    ```
+  max_turns: 20
+  timeout_seconds: 600
+  allowed_tools: [Read, Glob, Grep, Skill]
+graders:
+  - name: reads-the-502-under-the-cors-message
+    type: llm
+    criteria: |
+      PASS if the reply says the real failure is the 502 Bad Gateway on POST /v1/checkout and the CORS message is a
+      side effect (the proxy's 502 error response carries no Access-Control-Allow-Origin header, so the browser
+      reports CORS), so the problem sits between the proxy and the backend after the deploy, not in the CORS
+      settings.
+      FAIL if the reply treats it as a CORS configuration problem or never mentions the 502.
+  - name: red-command-and-ranked-hypotheses
+    type: llm
+    criteria: |
+      PASS if, before proposing any fix, the reply gives one read-only command that shows the failure outside the
+      browser (for example a curl to https://api.example.com/v1/checkout that prints the HTTP status and headers, or
+      the proxy or app log lines for that request), then 2 to 5 hypotheses in a stated order of likelihood, each
+      paired with the result that would confirm or rule it out, at least one tied to this afternoon's deploy.
+      FAIL if there is no such command, if the hypotheses lack confirm/rule-out results, or if the reply jumps
+      straight to a fix.
+  - name: plain-language-terms
+    type: llm
+    criteria: |
+      PASS if, the first time each appears, CORS is expanded (Cross-Origin Resource Sharing) and 502 Bad Gateway is
+      explained in a few plain words (the proxy got no valid response from the service behind it).
+      FAIL if either term is used without that explanation.
+  - name: must-not-change-cors-settings
+    type: llm
+    criteria: |
+      FAIL if the reply proposes a CORS change as the fix or as a "quick try": adding or widening origins,
+      CORS_ALLOW_ALL_ORIGINS, other Django CORS settings, or adding Access-Control-Allow-Origin headers at the proxy
+      to make the error go away.
+      PASS if any CORS remark is limited to explaining that the proxy's error responses lack the header (optionally
+      adding it to error responses later so browsers show the real status).
+  - name: skill-indicator
+    type: tool_used
+    tool: Skill
+    input_match: '"skill"\s*:\s*"(?:[\w-]+:)?error-reading"'

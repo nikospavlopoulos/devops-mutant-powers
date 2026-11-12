@@ -1,0 +1,46 @@
+# GitLab CI include: secret scan (gitleaks) and dependency + secret scan of the checkout (trivy fs).
+# Use: `include: - local: ci/gitlab-ci-scan.yml` in a pipeline that defines a "scan" stage.
+# Images are pinned by tag AND digest: in March 2026 attackers re-pointed Trivy release tags (CVE-2026-33634);
+# a digest cannot be moved. Bump tag and digest together.
+
+.scan-rules:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_TAG
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+secret-scan:
+  extends: .scan-rules
+  stage: scan
+  image:
+    name: zricethezav/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f  # CHANGE
+    entrypoint: [""]                    # the image's ENTRYPOINT is gitleaks; the runner needs a shell
+  variables:
+    GIT_DEPTH: "0"                      # full clone: the merge request range must exist locally
+  script:
+    - |
+      if [ -n "${CI_MERGE_REQUEST_DIFF_BASE_SHA:-}" ]; then
+        gitleaks git --redact --no-banner --report-format json --report-path gitleaks-report.json \
+          --log-opts="${CI_MERGE_REQUEST_DIFF_BASE_SHA}..${CI_COMMIT_SHA}" .
+      else
+        gitleaks dir --redact --no-banner --report-format json --report-path gitleaks-report.json .
+      fi
+  artifacts:
+    when: always                        # the report explains a red job; --redact keeps secrets out of it
+    paths: [gitleaks-report.json]
+    expire_in: 1 week
+
+dependency-scan:
+  extends: .scan-rules
+  stage: scan
+  image:
+    name: aquasec/trivy:0.75.0@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa  # CHANGE
+    entrypoint: [""]
+  variables:
+    TRIVY_CACHE_DIR: .trivycache/       # vulnerability DB, reused through the job cache
+  cache:
+    key: trivy-db
+    paths: [.trivycache/]
+  script:
+    # Severities, exit code and filters come from the repo's trivy.yaml (copy of tooling/security/scanning/trivy.yaml).
+    - trivy fs --config trivy.yaml --skip-dirs .trivycache .

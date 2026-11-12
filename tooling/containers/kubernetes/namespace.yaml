@@ -1,0 +1,44 @@
+# Namespace with Pod Security Admission "restricted", a ResourceQuota and LimitRange defaults.
+# A quota on requests.*/limits.memory rejects containers without them; the LimitRange fills them in when omitted.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: app-a                                           # CHANGE: namespace name
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: v1.37   # CHANGE: cluster minor; pinned so an upgrade cannot tighten it silently
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/warn-version: latest     # shows what breaks before you bump enforce-version after an upgrade
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/audit-version: latest
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: app-a-quota
+  namespace: app-a                # CHANGE: namespace name
+spec:
+  hard:
+    requests.cpu: "4"             # CHANGE: sum of CPU requests in the namespace
+    requests.memory: 8Gi          # CHANGE
+    limits.memory: 16Gi           # CHANGE; no limits.cpu: it would force CPU limits (throttling) on every pod
+    pods: "50"                    # CHANGE
+    services.loadbalancers: "1"   # CHANGE: each LoadBalancer Service is a billed cloud load balancer
+    persistentvolumeclaims: "10"  # CHANGE
+    requests.storage: 100Gi       # CHANGE: sum of PVC requests
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: app-a-defaults
+  namespace: app-a                # CHANGE: namespace name
+spec:
+  limits:
+    - type: Container
+      defaultRequest:             # used when a container sets no request
+        cpu: 100m                 # CHANGE
+        memory: 128Mi             # CHANGE
+      default:                    # used when a container sets no limit
+        memory: 256Mi             # CHANGE
+      max:
+        memory: 2Gi               # CHANGE: largest single container allowed

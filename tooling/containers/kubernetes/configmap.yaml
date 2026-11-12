@@ -1,0 +1,14 @@
+# Non-secret runtime config, consumed with envFrom in deployment.yaml.
+# Env vars are read at container start: after a change, roll the Deployment (or let GitOps hash the name).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-a-config            # CHANGE: app name
+  namespace: app-a              # CHANGE: namespace
+  labels:
+    app.kubernetes.io/name: app-a
+data:
+  APP_ENV: "production"         # CHANGE
+  LOG_LEVEL: "info"             # CHANGE
+  HTTP_PORT: "8080"             # values are strings: quote numbers and booleans
+  PUBLIC_URL: "https://app.example.com"  # CHANGE

@@ -1,0 +1,175 @@
+# Variant of transfer-job.yaml for a source PVC that is ReadWriteOnce and held by a RUNNING pod:
+# RWO attaches to one node, so the Job must land on that node (podAffinity), tolerate its taints
+# and keep a compatible nodeSelector. Live data is copied while the app writes: fine for append-only
+# trees, NOT a consistent copy of a database (dump it instead: postgres-operations skill).
+# ReadWriteOncePod volumes cannot be shared at all: scale the holder to 0 and use transfer-job.yaml.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: transfer                          # CHANGE: dedicated SA per job family
+  namespace: app-a                        # CHANGE: namespace of the holder pod and its PVC
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: transfer-scratch                  # CHANGE: markers + run log live here, not in emptyDir
+  namespace: app-a                        # CHANGE: namespace of the holder pod and its PVC
+  labels:
+    app.kubernetes.io/name: transfer
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: standard              # CHANGE: WaitForFirstConsumer class, so it binds on the holder's node/zone
+  resources:
+    requests:
+      storage: 5Gi                        # CHANGE: markers/logs only; size ~1:1 with data if you stage dumps here
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: transfer-app-a-rwo-run-001        # CHANGE: unique per run; the pod template cannot be edited after create
+  namespace: app-a                        # CHANGE: namespace of the holder pod and its PVC
+  labels:
+    app.kubernetes.io/name: transfer
+    app.kubernetes.io/part-of: app-a      # CHANGE: owning application
+spec:
+  completions: 1
+  parallelism: 1
+  backoffLimit: 2                         # CHANGE: retries resume from markers; default would be 6
+  activeDeadlineSeconds: 21600            # CHANGE: > expected runtime + HOLD_ON_FAILURE_SECONDS
+  # ttlSecondsAfterFinished: 604800       # CHANGE: enable only when logs are shipped or on the PVC; TTL deletes the pods too
+  podFailurePolicy:
+    rules:
+      - action: FailJob                   # exit 2 = config/preflight error: a retry cannot fix it
+        onExitCodes:
+          containerName: transfer
+          operator: In
+          values: [2]
+      - action: Ignore                    # eviction/preemption does not burn backoffLimit
+        onPodConditions:
+          - type: DisruptionTarget
+            status: "True"                # defaults to True on current APIs; older schemas require it
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: transfer
+        app.kubernetes.io/part-of: app-a  # CHANGE: owning application
+    spec:
+      restartPolicy: Never                # failed pods stay for logs; required by podFailurePolicy
+      serviceAccountName: transfer        # CHANGE: matches the ServiceAccount above
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 60   # CHANGE: time for the trap to stop the tool and write FAILED
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: app-a    # CHANGE: REAL labels of the holder pod (kubectl get pod --show-labels)
+              topologyKey: kubernetes.io/hostname  # same node, because RWO attaches per node
+      nodeSelector:
+        kubernetes.io/os: linux           # CHANGE: copy the holder pod's nodeSelector exactly, or keep only this
+      tolerations:
+        - key: dedicated                  # CHANGE: copy the holder node's taint key exactly
+          operator: Equal
+          value: data                     # CHANGE: taint value
+          effect: NoSchedule              # CHANGE: taint effect
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000                   # CHANGE: read access to the source files (often the holder's UID)
+        runAsGroup: 1000                  # CHANGE: GID matching the source files
+        seccompProfile:
+          type: RuntimeDefault
+        # no fsGroup: it would re-own the holder's live volume at mount time (kubernetes-storage skill)
+      containers:
+        - name: transfer
+          image: "registry.example.com/tools/rclone-bash:<pinned-version>"  # CHANGE: pinned tag or digest, never :latest (README: image)
+          imagePullPolicy: IfNotPresent
+          command: ["bash", "/scripts/transfer.sh"]   # bash is PID 1 and owns the SIGTERM trap
+          env:
+            - name: JOB_NAME
+              value: "transfer-app-a-rwo" # CHANGE: short id for logs/markers
+            - name: RUN_ID
+              value: "run-001"            # CHANGE: same id = resume, new id = fresh run; CronJob: from the job-name label (README)
+            - name: TRANSFER_TOOL
+              value: "rclone"             # CHANGE: rclone | rsync
+            - name: SRC_DIR
+              value: "/src"
+            - name: DST
+              value: "dst:example-bucket/app-a/run-001"  # CHANGE: remote:bucket/prefix; prefer one prefix per run
+            - name: STATE_ROOT
+              value: "/scratch/state"
+            - name: RCLONE_TRANSFERS
+              value: "4"                  # CHANGE: lower than the base: the app shares this node's disk and NIC
+            - name: RCLONE_CHECKERS
+              value: "8"                  # CHANGE: raise for many small files if the app tolerates the I/O
+            - name: RCLONE_EXTRA_FLAGS
+              value: "--fast-list"        # CHANGE: fewer listing calls, ~1 KiB RAM per object
+            - name: HEARTBEAT_SECONDS
+              value: "60"                 # CHANGE: liveness line interval
+            - name: HOLD_ON_FAILURE_SECONDS
+              value: "0"                  # CHANGE: e.g. 3600 while debugging, then back to 0
+            - name: HOME
+              value: "/tmp"               # tools that write ~/.config or ~/.cache need a writable HOME
+            - name: RCLONE_CONFIG_DST_TYPE
+              value: "s3"
+            - name: RCLONE_CONFIG_DST_PROVIDER
+              value: "AWS"                # CHANGE: S3 provider name as rclone spells it
+            - name: RCLONE_CONFIG_DST_REGION
+              value: "eu-west-1"          # CHANGE: the bucket's real region
+            - name: RCLONE_CONFIG_DST_NO_CHECK_BUCKET
+              value: "true"               # least-privilege key cannot create buckets
+            - name: RCLONE_CONFIG_DST_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: transfer-dst-credentials  # CHANGE: created out-of-band (secrets-management skill)
+                  key: access_key_id
+            - name: RCLONE_CONFIG_DST_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: transfer-dst-credentials  # CHANGE: same Secret as above
+                  key: secret_access_key
+            - name: NOTIFY_URL
+              valueFrom:
+                secretKeyRef:
+                  name: transfer-notify   # CHANGE: webhook Secret; absent = no notifications
+                  key: url
+                  optional: true
+          resources:
+            requests:
+              cpu: 100m                   # CHANGE: must fit next to the holder on its node, or the pod stays Pending
+              memory: 128Mi               # CHANGE: ~ transfers x (buffer-size + upload_concurrency x chunk_size)
+              ephemeral-storage: 256Mi
+            limits:
+              memory: 512Mi               # CHANGE: measure a dry run, then set
+              ephemeral-storage: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: src
+              mountPath: /src
+              readOnly: true              # the holder keeps writing; this pod never does
+            - name: scratch
+              mountPath: /scratch
+            - name: script
+              mountPath: /scripts
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: src
+          persistentVolumeClaim:
+            claimName: app-a-data         # CHANGE: the RWO PVC the holder pod mounts
+            readOnly: true
+        - name: scratch
+          persistentVolumeClaim:
+            claimName: transfer-scratch
+        - name: script
+          configMap:
+            name: transfer-script         # CHANGE: generated from tooling/scripts/strict-shell-template.sh
+            defaultMode: 0444
+        - name: tmp
+          emptyDir:
+            sizeLimit: 256Mi              # transient files only; never stage data in emptyDir

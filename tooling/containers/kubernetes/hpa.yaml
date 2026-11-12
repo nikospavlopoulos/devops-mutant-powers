@@ -1,0 +1,34 @@
+# CPU-based HorizontalPodAutoscaler. Remove spec.replicas from the Deployment, or every apply fights the HPA.
+# Utilization is a percentage of the container CPU *request*: no request, no scaling (TARGETS shows <unknown>).
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: app-a                         # CHANGE: app name
+  namespace: app-a                    # CHANGE: namespace
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: app-a                       # CHANGE: Deployment name
+  minReplicas: 2                      # CHANGE: >= 2 keeps the app up through a node drain
+  maxReplicas: 10                     # CHANGE: bounded by quota and downstream capacity (DB connections)
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70      # CHANGE: % of the CPU request
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0   # react to load at once
+      policies:
+        - type: Percent
+          value: 100                  # at most double per minute
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300 # acts on the highest recommendation of the last 5 min: no flapping
+      policies:
+        - type: Percent
+          value: 50                   # CHANGE: remove at most half the pods per minute
+          periodSeconds: 60

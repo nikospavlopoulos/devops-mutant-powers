@@ -1,0 +1,10 @@
+---
+title: "Request path through the CDN and gateway"
+---
+flowchart TD
+    U[Client] --> C[CDN]
+    C --> G[Envoy Gateway<br/>TLS ends here]
+    G --> S[Service shop-api]
+    S --> P1[Pod 1]
+    S --> P2[Pod 2]
+    G -.-> O[Old ingress<br/>kept for rollback]

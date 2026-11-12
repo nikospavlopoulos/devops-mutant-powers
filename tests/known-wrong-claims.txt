@@ -1,0 +1,3 @@
+# Regex<TAB>reason. Claims proven wrong; validate.sh fails if they appear in skills/docs/tooling.
+\bhistoryLimit\b	HelmRelease uses spec.maxHistory; historyLimit does not exist
+house init line first|in the house style: the init line is the first line|go in as Mermaid source, in the house style	Repository documents carry no init line: GitHub renders their diagrams with its defaults (issue 11)

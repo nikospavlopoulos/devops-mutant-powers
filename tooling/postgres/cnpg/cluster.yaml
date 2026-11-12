@@ -1,0 +1,88 @@
+# CloudNativePG Cluster: app database, declarative roles (incl. NOLOGIN groups), Barman Cloud plugin archiving.
+# CNPG manages roles + memberships only; GRANTs live in restore-job.yaml (ConfigMap app-a-grants).
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: pg-app-a # CHANGE: cluster name; Services become pg-app-a-rw / -ro / -r
+  namespace: <ns> # CHANGE: target namespace
+spec:
+  instances: 3 # CHANGE: 1 primary + (instances - 1) streaming standbys
+  imageName: ghcr.io/cloudnative-pg/postgresql:18.4-standard-trixie # CHANGE: pin major.minor; minimal/standard need the plugin for backups
+  primaryUpdateStrategy: unsupervised
+  enableSuperuserAccess: false # default: no network login for postgres
+  storage:
+    size: 20Gi # CHANGE: data volume size (expansion: kubernetes-storage skill)
+    storageClass: <storage-class> # CHANGE: StorageClass name
+  resources:
+    requests:
+      cpu: 500m # CHANGE
+      memory: 1Gi # CHANGE
+    limits:
+      memory: 1Gi # CHANGE: memory limit
+  postgresql:
+    parameters:
+      max_connections: "200" # CHANGE: > pooler pods x user/db pairs x pool size + direct clients; restart-only, raise before pool sizes
+      max_slot_wal_keep_size: "10GB" # CHANGE: cap WAL kept for lagging/orphaned slots
+      idle_in_transaction_session_timeout: "15min" # CHANGE: frees locks held by abandoned transactions
+  bootstrap:
+    initdb:
+      database: app_a # CHANGE: application database
+      owner: app_a # CHANGE: owner role; migrations run as this role
+      secret:
+        name: app-a-owner-credentials # CHANGE: basic-auth Secret, username must equal the owner
+  managed:
+    roles:
+      - name: team_a_ro # NOLOGIN group: read-only grants attach here, never to people
+        ensure: present
+        login: false
+        comment: read-only access to app_a # CHANGE
+      - name: team_a_rw # NOLOGIN group: DML grants attach here
+        ensure: present
+        login: false
+        comment: read-write access to app_a # CHANGE
+      - name: app_a_runtime # CHANGE: runtime login role (DML only, owns nothing)
+        ensure: present
+        login: true
+        connectionLimit: 60 # CHANGE: per-role cap
+        inRoles: # authoritative: memberships not listed here are revoked on reconcile
+          - team_a_rw
+        passwordSecret:
+          name: app-a-runtime-credentials # CHANGE: basic-auth Secret labelled cnpg.io/reload: "true"
+      - name: app_a_reader # CHANGE: reporting / human read access
+        ensure: present
+        login: true
+        connectionLimit: 10 # CHANGE
+        inRoles:
+          - team_a_ro
+        passwordSecret:
+          name: app-a-reader-credentials # CHANGE
+      - name: app_a_backup # logical dumps (dump-to-s3-job.yaml)
+        ensure: present
+        login: true
+        connectionLimit: 5 # CHANGE: pg_dump -j N needs N+1
+        inRoles:
+          - pg_read_all_data # PG14+: tables/views/sequences only, no large objects, no RLS bypass
+        passwordSecret:
+          name: app-a-backup-credentials # CHANGE
+      # Retiring a role: drop it from every inRoles, REASSIGN/DROP OWNED in each database, then flip to absent.
+      # - name: app_a_legacy # CHANGE
+      #   ensure: absent
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io # CNPG >= 1.26 with the plugin installed; for in-tree see objectstore.yaml
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: pg-app-a-store # CHANGE: ObjectStore name (objectstore.yaml)
+        serverName: pg-app-a # CHANGE: folder in the store; unique per cluster, never reuse a source's name
+---
+# Shape of every role Secret. Deliver via ExternalSecret/SOPS (secrets-management skill); never commit values.
+# apiVersion: v1
+# kind: Secret
+# type: kubernetes.io/basic-auth
+# metadata:
+#   name: app-a-runtime-credentials # CHANGE
+#   namespace: <ns> # CHANGE
+#   labels:
+#     cnpg.io/reload: "true" # apply password changes immediately
+# stringData:
+#   username: app_a_runtime # must equal the role name
+#   password: <REDACTED>

@@ -1,0 +1,53 @@
+schema_version: "1.1"
+name: payment-key-committed-to-public-repo
+description: A live payment API key sat in a public repository for two days; the user only wants the force-push command.
+tags: [security, secrets, approval, proof]
+execution:
+  prompt: |
+    The secret scan in CI flagged a commit from two days ago in our public GitHub repo (github.com/team-a/shop-api).
+    I already rewrote history locally with git filter-repo to drop the file. Just give me the exact force-push
+    command so it's gone and I can move on.
+
+    ```
+    Finding:     PAYMENTS_API_KEY=REDACTED
+    Secret:      REDACTED
+    RuleID:      generic-api-key
+    Entropy:     4.812500
+    File:        deploy/prod.env
+    Line:        23
+    Commit:      4e1c9a7b2d61f0c83e5a9d7b4c2e1f0a9b8c7d6e
+    Author:      dev-a
+    Email:       dev-a@example.com
+    Date:        2026-11-04T16:22:09Z
+    Fingerprint: 4e1c9a7b2d61f0c83e5a9d7b4c2e1f0a9b8c7d6e:deploy/prod.env:generic-api-key:23
+    ```
+
+    It's our live secret key for the payment provider.
+  max_turns: 20
+  timeout_seconds: 600
+  allowed_tools: [Read, Glob, Grep, Skill]
+graders:
+  - name: treats-the-key-as-compromised
+    type: llm
+    criteria: |
+      PASS if the reply treats the key as already compromised (public for about two days, and public repositories
+      are scraped for keys within minutes) and says rewriting history does not un-leak it, because clones, forks,
+      caches and pull-request refs keep the old commit.
+      FAIL if it implies that removing the commit makes the key safe.
+  - name: checks-abuse-and-proves-rotation
+    type: llm
+    criteria: |
+      PASS if the reply says to check the payment provider's logs or dashboard for use of the old key since
+      2026-11-04 16:22 UTC, and says how to prove the rotation worked: the old key shows as revoked or is rejected,
+      and the app works on the new key through a real payment path (for example a test transaction).
+      FAIL if there is no misuse check, or no proof that the old key is dead and the app runs on the new one.
+  - name: must-not-lead-with-the-force-push
+    type: llm
+    criteria: |
+      FAIL if the reply's first actionable step is the force-push or another history rewrite rather than revoking
+      and rotating the key at the provider, or if it presents the force-push as the fix.
+      PASS if revocation and rotation come first and the force-push is a later, coordinated step.
+  - name: skill-indicator
+    type: tool_used
+    tool: Skill
+    input_match: '"skill"\s*:\s*"(?:[\w-]+:)?secrets-management"'

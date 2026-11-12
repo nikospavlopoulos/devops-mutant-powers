@@ -1,0 +1,18 @@
+.DS_Store
+*.swp
+*.swo
+node_modules/
+__pycache__/
+*.pyc
+.env
+.env.*
+*.tfstate
+*.tfstate.backup
+.terraform/
+
+# IDE
+.idea/
+evals/results/
+tests/test_runs/
+private/test_runs/
+private/eval-results/

@@ -1,0 +1,129 @@
+# Developer access tier: one ServiceAccount per person (identity) + shared ClusterRoles (permissions),
+# projected into each target namespace by a RoleBinding. Guidance: skills/access-management/.
+# Offline gate, token issuance, proof of denial and revoke: README.md. Applying to a shared cluster needs human approval.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: human-access                          # CHANGE: identities only; no binding for anyone but cluster admins here
+  labels:
+    pod-security.kubernetes.io/enforce: restricted   # nothing is meant to run here
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: dev-a                                 # CHANGE: one per person; never shared, never reused after offboarding
+  namespace: human-access                     # CHANGE: identity namespace above
+  labels:
+    access.example.com/person: dev-a          # CHANGE: same as name; revoke selects on it
+  annotations:
+    access.example.com/owner: dev-a@example.com   # CHANGE: the accountable human
+    access.example.com/ticket: "<ticket>"         # CHANGE: request + approval reference
+    access.example.com/review-by: "2026-12-31"    # CHANGE: review/expiry date; informational, nothing enforces it
+automountServiceAccountToken: false           # a human identity; never mounted into pods
+---
+# Exec rules, aggregated into the tier role below.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: access-exec-rules                     # CHANGE: org prefix
+  labels:
+    access.example.com/aggregate-to-view-plus-exec: "true"   # CHANGE: must match the tier selector
+rules:
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["get", "create"]                  # get = WebSocket handshake; create = SPDY, and WebSocket on 1.35+
+  # - apiGroups: [""]
+  #   resources: ["pods/portforward"]
+  #   verbs: ["get", "create"]                # CHANGE: opt-in; reaches every port of every pod in the namespace
+---
+# The tier: built-in view (no Secrets, no RBAC objects) + exec. exec can read whatever the container can read.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: access-view-plus-exec                 # CHANGE: tier name; bindings reference it
+aggregationRule:
+  clusterRoleSelectors:
+    - matchLabels:
+        rbac.authorization.k8s.io/aggregate-to-view: "true"
+    - matchLabels:
+        access.example.com/aggregate-to-view-plus-exec: "true"   # CHANGE: same label as access-exec-rules
+# No `rules:` on purpose: the control plane fills them; declaring them fights server-side apply.
+---
+# Cluster-scoped discovery so k9s can list namespaces. Cost: every namespace NAME becomes visible.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: access-discovery                      # CHANGE: org prefix
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "list", "watch"]           # resource types for k9s; schemas only, no custom-resource data
+  # - apiGroups: [""]
+  #   resources: ["nodes"]
+  #   verbs: ["get", "list", "watch"]         # CHANGE: opt-in; exposes node names, IPs, labels, taints
+  # never "nodes/proxy": even get = exec into every pod on the node, past audit and admission
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: access-discovery-human-access         # CHANGE: one per identity namespace
+subjects:
+  - kind: Group
+    apiGroup: rbac.authorization.k8s.io
+    name: system:serviceaccounts:human-access # CHANGE: all SAs in the identity namespace; deleting an SA drops it
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: access-discovery                      # CHANGE: discovery ClusterRole above
+---
+# One RoleBinding per (person, target namespace). Name = <person>-<tier>: roleRef is immutable,
+# so a tier change is a new binding (create new, delete old), never an in-place edit.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: dev-a-view-plus-exec                  # CHANGE: <person>-<tier>
+  namespace: app-a                            # CHANGE: target namespace
+  labels:
+    access.example.com/person: dev-a          # CHANGE: matches the ServiceAccount label
+    access.example.com/tier: view-plus-exec   # CHANGE: tier name
+subjects:
+  - kind: ServiceAccount
+    name: dev-a                               # CHANGE: the person's ServiceAccount
+    namespace: human-access                   # CHANGE: identity namespace
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: access-view-plus-exec                 # CHANGE: tier ClusterRole
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: dev-a-view-plus-exec                  # CHANGE: <person>-<tier>
+  namespace: app-b                            # CHANGE: second target namespace; copy per namespace, delete if unused
+  labels:
+    access.example.com/person: dev-a          # CHANGE: matches the ServiceAccount label
+    access.example.com/tier: view-plus-exec   # CHANGE: tier name
+subjects:
+  - kind: ServiceAccount
+    name: dev-a                               # CHANGE: the person's ServiceAccount
+    namespace: human-access                   # CHANGE: identity namespace
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: access-view-plus-exec                 # CHANGE: tier ClusterRole
+# ---
+# OPTIONAL long-lived token. WARNING: a non-expiring credential persisted in a readable Secret.
+# Default is a short-lived `kubectl create token` (README.md). Uncomment only with an accepted-risk record,
+# an owner and a review date. Revoke = delete this Secret (or the ServiceAccount).
+# apiVersion: v1
+# kind: Secret
+# type: kubernetes.io/service-account-token
+# metadata:
+#   name: dev-a-token                         # CHANGE: <person>-token
+#   namespace: human-access                   # CHANGE: identity namespace (same as the ServiceAccount)
+#   annotations:
+#     kubernetes.io/service-account.name: dev-a       # CHANGE: the ServiceAccount; create it first
+#     access.example.com/review-by: "2026-12-31"      # CHANGE: nothing expires this token for you

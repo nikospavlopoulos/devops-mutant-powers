@@ -1,0 +1,39 @@
+# ClusterIP Service for in-cluster traffic and the Ingress/Gateway; a LoadBalancer variant as the second document.
+apiVersion: v1
+kind: Service
+metadata:
+  name: app-a                       # CHANGE: app name (ingress.yaml / httproute.yaml point here)
+  namespace: app-a                  # CHANGE: namespace
+  labels:
+    app.kubernetes.io/name: app-a
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: app-a   # CHANGE: the Deployment's pod labels
+  ports:
+    - name: http
+      port: 80                      # CHANGE: port clients use
+      targetPort: http              # container port *name*: renumbering the container does not break the Service
+      protocol: TCP
+---
+# Only when traffic must bypass the Ingress/Gateway. Delete this document otherwise.
+apiVersion: v1
+kind: Service
+metadata:
+  name: app-a-lb                    # CHANGE: app name
+  namespace: app-a                  # CHANGE: namespace
+  labels:
+    app.kubernetes.io/name: app-a
+  annotations: {}                   # CHANGE: cloud LB annotations (internal LB, health probe path) from your provider's docs
+spec:
+  type: LoadBalancer
+  externalTrafficPolicy: Local      # keeps the client source IP; only nodes running a ready pod pass the LB health check
+  loadBalancerSourceRanges:
+    - 203.0.113.0/24                # CHANGE: allowed client CIDRs; omitting the list opens the port to everyone
+  selector:
+    app.kubernetes.io/name: app-a   # CHANGE: the Deployment's pod labels
+  ports:
+    - name: http
+      port: 80                      # CHANGE
+      targetPort: http
+      protocol: TCP

@@ -1,0 +1,42 @@
+<!-- Companion fragment: dashboard layout mockup (not live data). Copy into the session's screen_dir as a new file. -->
+<h2>shop-api: service overview</h2>
+<p class="subtitle">Layout preview: four golden signals on top, saturation below. Click the layout you prefer.</p>
+<style>
+  .dash { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 12px 0; }
+  .panel { border: 1px solid #c9ced6; border-radius: 6px; padding: 8px; background: #fff; }
+  .panel h4 { margin: 0 0 6px; font-size: 13px; color: #464c54; }
+  .stat { font-size: 26px; font-weight: 600; }
+  .ok { color: #1a7f37; } .warn { color: #b58100; } .crit { color: #c62828; }
+  .wide { grid-column: span 2; } .full { grid-column: span 4; }
+  .spark { width: 100%; height: 60px; }
+</style>
+<div class="options" data-multiselect>
+  <div class="option" data-choice="golden-signals" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <div class="dash">
+        <div class="panel"><h4>Request rate</h4><div class="stat ok">412 req/s</div></div>
+        <div class="panel"><h4>Error ratio (5xx)</h4><div class="stat warn">1.8 %</div></div>
+        <div class="panel"><h4>p95 latency</h4><div class="stat ok">180 ms</div></div>
+        <div class="panel"><h4>Saturation (CPU)</h4><div class="stat crit">91 %</div></div>
+        <div class="panel wide"><h4>Requests by status</h4>
+          <svg class="spark" viewBox="0 0 200 60" preserveAspectRatio="none"><polyline fill="none" stroke="#3274d9" stroke-width="2" points="0,40 20,38 40,35 60,36 80,30 100,28 120,31 140,25 160,27 180,22 200,24"/><polyline fill="none" stroke="#c62828" stroke-width="2" points="0,55 40,54 80,52 120,50 140,44 160,48 200,47"/></svg></div>
+        <div class="panel wide"><h4>Latency p50 / p95 / p99</h4>
+          <svg class="spark" viewBox="0 0 200 60" preserveAspectRatio="none"><polyline fill="none" stroke="#1a7f37" stroke-width="2" points="0,50 50,48 100,49 150,47 200,46"/><polyline fill="none" stroke="#b58100" stroke-width="2" points="0,35 50,33 100,30 150,28 200,29"/><polyline fill="none" stroke="#c62828" stroke-width="2" points="0,20 50,15 100,18 150,10 200,12"/></svg></div>
+      </div>
+      <h3>Golden signals first</h3><p>Rate, errors, latency, saturation as stat tiles; trends underneath.</p>
+    </div>
+  </div>
+  <div class="option" data-choice="per-pod" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <div class="dash">
+        <div class="panel full"><h4>Pods: restarts, CPU, memory (one row per pod)</h4>
+          <div class="placeholder">table: pod | restarts | CPU % | memory % | ready</div></div>
+        <div class="panel wide"><h4>Error ratio by route</h4><div class="placeholder">bar chart</div></div>
+        <div class="panel wide"><h4>Upstream latency by dependency</h4><div class="placeholder">heatmap</div></div>
+      </div>
+      <h3>Per-pod detail first</h3><p>For debugging sessions: which pod, which route, which dependency.</p>
+    </div>
+  </div>
+</div>

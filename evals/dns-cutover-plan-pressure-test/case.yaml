@@ -1,0 +1,45 @@
+schema_version: "1.1"
+name: dns-cutover-plan-pressure-test
+description: The user asks to be grilled on a weekend DNS cutover plan with a TTL timing gap and a database gap.
+tags: [workflow, grilling]
+execution:
+  prompt: |
+    Grill me on this cutover plan before I send it to the team:
+
+    1. Friday 17:00: lower the TTL of shop.example.com from 86400 to 300.
+    2. Saturday 10:00: change the A record from 198.51.100.10 (old VM) to 198.51.100.20 (new Kubernetes ingress).
+    3. Saturday 10:15: shut down the old VM.
+    4. The database is already replicated to the new cluster, so nothing to do there.
+    5. If anything breaks, we switch the A record back.
+  max_turns: 20
+  timeout_seconds: 600
+  allowed_tools: [Read, Glob, Grep, Skill]
+graders:
+  - name: numbered-questions-with-options
+    type: llm
+    criteria: |
+      PASS if the reply is a round of numbered questions (roughly 3 to 8), each offering two or more concrete
+      options and marking a recommended answer, and it stops to wait for the user's answers before going further.
+      FAIL if it is mainly an essay or critique, if the questions lack options or a recommendation, or if it dumps
+      more than about ten questions at once.
+  - name: hits-the-real-gaps
+    type: llm
+    criteria: |
+      PASS if the questions cover at least three of these gaps: (a) the 86400-second TTL is lowered only 17 hours
+      before the switch, so resolvers that cached the record late on Friday keep the old address until about
+      Saturday 17:00, and the 10:15 VM shutdown strands those users; (b) database writes during the switch (which
+      side is primary, a write freeze or promotion, replication direction) and what rolling back means once the new
+      side has taken writes; (c) a valid TLS certificate for shop.example.com on the new ingress before DNS points
+      there; (d) the rollback trigger, and the TTL delay when switching back; (e) how success is verified through the
+      real hostname.
+      FAIL if fewer than three are covered.
+  - name: must-not-rewrite-the-plan
+    type: llm
+    criteria: |
+      FAIL if the reply includes its own rewritten or corrected version of the plan (a new step list or timeline)
+      instead of leaving the decisions to the user's answers.
+      PASS otherwise.
+  - name: skill-indicator
+    type: tool_used
+    tool: Skill
+    input_match: '"skill"\s*:\s*"(?:[\w-]+:)?grilling"'

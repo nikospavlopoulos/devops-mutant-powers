@@ -1,0 +1,79 @@
+# Layered Flux Kustomizations: controllers -> configs -> migrations -> apps.
+# `wait: true` only on layers whose health gates the next layer; leaf layers use targeted healthChecks.
+# Never write `suspend: false` here: it blocks break-glass suspends via kubectl patch.
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: infra-controllers                 # CHANGE: layer name
+  namespace: flux-system                  # CHANGE: namespace of your Flux objects
+spec:
+  interval: 30m                           # CHANGE: drift-correction cadence; new commits apply immediately
+  retryInterval: 2m                       # CHANGE: retry cadence after a failure (defaults to interval)
+  timeout: 10m                            # CHANGE: apply + health budget (defaults to interval)
+  sourceRef:
+    kind: GitRepository
+    name: flux-system                     # CHANGE: your GitRepository
+  path: ./infrastructure/controllers      # CHANGE: repo path of CRDs/operators/controllers
+  prune: true
+  wait: true                              # provider layer: dependents need these controllers healthy
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: infra-configs                     # CHANGE: layer name
+  namespace: flux-system                  # CHANGE: namespace of this object
+spec:
+  dependsOn:
+    - name: infra-controllers             # CHANGE: must match the provider layer
+  interval: 30m                           # CHANGE: reconcile cadence
+  retryInterval: 2m                       # CHANGE: retry cadence after a failure
+  timeout: 5m                             # CHANGE: apply + health budget
+  sourceRef:
+    kind: GitRepository
+    name: flux-system                     # CHANGE: your GitRepository
+  path: ./infrastructure/configs          # CHANGE: CRs consumed by apps (issuers, classes, policies)
+  prune: true
+  wait: true                              # apps need these CRs Ready
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: app-a-migrations                  # CHANGE: one migrations layer per app that has one-shot Jobs
+  namespace: flux-system                  # CHANGE: namespace of this object
+spec:
+  dependsOn:
+    - name: infra-configs                 # CHANGE: dependency layer name
+  interval: 60m                           # CHANGE: reconcile cadence
+  timeout: 15m                            # CHANGE: longest expected migration run
+  sourceRef:
+    kind: GitRepository
+    name: flux-system                     # CHANGE: your GitRepository
+  path: ./apps/app-a/migrations           # CHANGE: Jobs only; never StatefulSets in a force layer
+  prune: true
+  wait: true                              # the app layer waits for the Job to complete
+  force: true                             # recreate Jobs when their immutable template changes
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: apps                              # CHANGE: leaf layer
+  namespace: flux-system                  # CHANGE: namespace of this object
+spec:
+  dependsOn:
+    - name: infra-configs                 # CHANGE: dependency layer name
+    - name: app-a-migrations              # CHANGE: dependency layer name
+  interval: 10m                           # CHANGE: reconcile cadence
+  retryInterval: 2m                       # CHANGE: retry cadence after a failure
+  timeout: 5m                             # CHANGE: apply + health budget
+  sourceRef:
+    kind: GitRepository
+    name: flux-system                     # CHANGE: your GitRepository
+  path: ./apps/production                 # CHANGE: environment overlay
+  prune: true
+  wait: false                             # leaf: one unhealthy pod must not block other layers
+  healthChecks:                           # CHANGE: only objects whose health this layer should report
+    - apiVersion: helm.toolkit.fluxcd.io/v2
+      kind: HelmRelease
+      name: app-a                         # CHANGE: HelmRelease to health-check
+      namespace: app-a                    # CHANGE: its namespace

@@ -1,0 +1,30 @@
+# Copy to .dockerignore in the build context root. Everything not ignored is sent to the builder,
+# and `COPY . .` puts it in a layer: keep secrets, VCS data and local build output out.
+.git
+.gitignore
+.dockerignore
+**/.env
+**/.env.*
+!**/.env.example
+**/*.pem
+**/*.key
+**/*.p12
+**/id_rsa*
+**/*.tfstate
+**/*.tfstate.*
+**/.terraform
+# Dependencies and build output are recreated inside the image
+**/node_modules
+**/__pycache__
+**/*.pyc
+.venv
+venv
+target
+dist
+build
+coverage
+# Editor and OS noise
+.idea
+.vscode
+**/.DS_Store
+**/*.log

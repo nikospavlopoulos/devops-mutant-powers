@@ -1,0 +1,6 @@
+# Antigravity findings that are correct by design (docs/porting-to-a-new-harness.md, Appendix C).
+# severity<TAB>file<TAB>message prefix. scripts/check-harness-validators.sh fails on any other finding, and on a line here
+# that is no longer reported.
+warning	AGENTS.md	never loaded
+warning	commands	never loaded
+warning	hooks/hooks.json	never loaded

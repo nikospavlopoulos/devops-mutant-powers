@@ -1,0 +1,159 @@
+# Logical dump of one database to S3: dump to a scratch PVC, validate, then upload (never pipe pg_dump into an uploader).
+# Generic Job wrapper conventions: tooling/kubernetes/batch-job/ (batch-data-jobs skill). For schedules, wrap the
+# spec in a CronJob jobTemplate. Inline scripts use $(cmd) only; Kubernetes would expand $(ENV_NAME).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: pg-dump-app-a # CHANGE: unique per run (append a date)
+  namespace: <ns> # CHANGE: same namespace as the Cluster
+  labels:
+    app.kubernetes.io/name: pg-dump-app-a # CHANGE
+spec:
+  backoffLimit: 0 # a failed dump is investigated, not blindly retried
+  activeDeadlineSeconds: 21600 # CHANGE: hard stop (seconds)
+  ttlSecondsAfterFinished: 604800 # CHANGE: keep the pod and its logs for a week
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: pg-dump-app-a # CHANGE
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: pg-dump
+          image: ghcr.io/cloudnative-pg/postgresql:18.4-minimal-trixie # CHANGE: client major >= server major
+          env:
+            - name: PGHOST
+              value: pg-app-a-rw # CHANGE: <cluster>-rw, or <cluster>-ro (long dumps there can hit recovery conflicts)
+            - name: PGPORT
+              value: "5432"
+            - name: PGDATABASE
+              value: app_a # CHANGE: database to dump
+            - name: PGSSLMODE
+              value: require # CHANGE: verify-full + PGSSLROOTCERT from the cluster CA Secret for stricter TLS
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -euo pipefail
+              umask 077
+              esc() { sed 's/[\\:]/\\&/g'; }   # .pgpass escaping for ':' and '\'
+              printf '%s:%s:%s:%s:%s\n' "$PGHOST" "$PGPORT" "$PGDATABASE" \
+                "$(esc < /etc/pg-auth/username)" "$(esc < /etc/pg-auth/password)" > /tmp/pgpass
+              export PGPASSFILE=/tmp/pgpass PGUSER="$(cat /etc/pg-auth/username)"
+              psql -X -At -v ON_ERROR_STOP=1 -c 'SELECT current_user, current_database(), version()'
+              out="/work/${PGDATABASE}-$(date -u +%Y%m%dT%H%M%SZ).dump"
+              pg_dump -Fc --no-password -f "$out.part"
+              pg_restore --list "$out.part" > "$out.toc"
+              toc=$(grep -cE '^[0-9]+;' "$out.toc" || true)
+              [ "$toc" -gt 0 ] || { echo "FAIL: empty TOC in $out.part" >&2; exit 1; }
+              pg_restore -f /dev/null "$out.part"   # full read: every data block must decompress
+              sha=$(sha256sum "$out.part" | cut -d' ' -f1)
+              mv "$out.part" "$out"
+              printf '%s %s\n' "$(wc -c < "$out")" "$sha" > "$out.complete"
+              basename "$out" > /work/LATEST
+              echo "OK: $out toc_entries=$toc bytes=$(wc -c < "$out")"
+          resources:
+            requests:
+              cpu: 500m # CHANGE
+              memory: 256Mi # CHANGE
+            limits:
+              memory: 1Gi # CHANGE
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: work
+              mountPath: /work
+            - name: tmp
+              mountPath: /tmp
+            - name: pg-auth
+              mountPath: /etc/pg-auth
+              readOnly: true
+      containers:
+        - name: upload
+          image: rclone/rclone:<pinned-version> # CHANGE: pin an exact rclone release, never latest
+          env:
+            - name: HOME
+              value: /tmp
+            - name: DEST_PATH
+              value: <bucket>/<prefix>/app_a # CHANGE: bucket/prefix for logical dumps (not the WAL archive path)
+            - name: RCLONE_CONFIG_DST_TYPE
+              value: s3
+            - name: RCLONE_CONFIG_DST_PROVIDER
+              value: Other # CHANGE: AWS for Amazon S3
+            - name: RCLONE_CONFIG_DST_ENDPOINT
+              value: https://s3.example.com # CHANGE: delete for AWS S3
+            - name: RCLONE_CONFIG_DST_REGION
+              value: <region> # CHANGE
+            - name: RCLONE_CONFIG_DST_ENV_AUTH
+              value: "true" # reads AWS_* below or workload identity
+            - name: RCLONE_CONFIG_DST_NO_CHECK_BUCKET
+              value: "true" # key may not create/list buckets
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: pg-dump-s3 # CHANGE: prefer workload identity and drop both keys
+                  key: ACCESS_KEY_ID
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: pg-dump-s3 # CHANGE
+                  key: ACCESS_SECRET_KEY
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              name=$(cat /work/LATEST)
+              [ -s "/work/$name.complete" ] || { echo "FAIL: no .complete marker for $name" >&2; exit 1; }
+              rclone copyto "/work/$name" "dst:$DEST_PATH/$name"
+              local_size=$(wc -c < "/work/$name" | tr -d ' ')
+              # bucket backends return an empty result for a missing object: an empty size is a failure
+              remote_size=$(rclone lsjson --stat "dst:$DEST_PATH/$name" | sed -n 's/.*"Size": *\([0-9][0-9]*\).*/\1/p')
+              if [ -z "$remote_size" ] || [ "$remote_size" != "$local_size" ]; then
+                echo "FAIL: size local=$local_size remote=${remote_size:-missing}" >&2; exit 1
+              fi
+              rclone copyto "/work/$name.complete" "dst:$DEST_PATH/$name.complete"   # marker last
+              echo "OK: uploaded $name ($local_size bytes)"
+          resources:
+            requests:
+              cpu: 250m # CHANGE
+              memory: 128Mi # CHANGE
+            limits:
+              memory: 512Mi # CHANGE
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: work
+              mountPath: /work
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: work # scratch on a PVC, deleted with the pod; sizing: kubernetes-storage skill
+          ephemeral:
+            volumeClaimTemplate:
+              spec:
+                accessModes: ["ReadWriteOnce"]
+                storageClassName: <storage-class> # CHANGE
+                resources:
+                  requests:
+                    storage: 50Gi # CHANGE: >= dump size; ~1:1 of DB size for already-compressed data
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
+        - name: pg-auth
+          secret:
+            secretName: app-a-backup-credentials # CHANGE: basic-auth Secret of the dump role (app_a_backup)
+            defaultMode: 0440

@@ -1,0 +1,34 @@
+# gitleaks config for this repo (gitleaks >= 8.16). Private denylist rules are generated outside the repo.
+title = "devops-mutant-powers"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "chat-incoming-webhook"
+description = "Chat incoming-webhook URL carrying a token (Mattermost-style /hooks/<token>, Discord /api/webhooks/<id>/<token>)"
+regex = '''https?://[A-Za-z0-9.-]+/(?:api/)?(?:hooks/[A-Za-z0-9]{20,}|webhooks/[0-9]+/[A-Za-z0-9_-]{20,})'''
+tags = ["webhook"]
+
+[[rules]]
+id = "private-ipv4-host"
+description = "Bare private/CGNAT host IP; CIDR network definitions (network address ending .0) are allowed"
+regex = '''\b((?:10\.(?:\d{1,3}\.){2}\d{1,3})|(?:172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})|(?:192\.168\.\d{1,3}\.\d{1,3})|(?:100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d{1,3}\.\d{1,3}))(/\d{1,2})?\b'''
+tags = ["network"]
+
+    [rules.allowlist]
+    regexTarget = "match"
+    # Network form only (10.42.0.0/16): a host with a prefix (10.1.2.3/24, WireGuard/netplan style) is still a host IP.
+    regexes = ['''\.0/(?:[0-9]|[12][0-9]|3[0-2])$''']
+
+[[rules]]
+id = "literal-credential-assignment"
+description = "Literal password/secret/token value written in text"
+regex = '''(?i)\b(?:password|passwd|secret|token|api[_-]?key)[ \t]*[:=][ \t]*["']?([^\s"'<>${}()\[\]]{8,})'''
+secretGroup = 1
+entropy = 3.3
+tags = ["credential"]
+
+[allowlist]
+description = "Teaching placeholders"
+regexes = ['''(?i)example''', '''(?i)redacted''', '''(?i)changeme''', '''(?i)placeholder''']

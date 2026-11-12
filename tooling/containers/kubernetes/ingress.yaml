@@ -1,0 +1,26 @@
+# Ingress with a cert-manager certificate. ingress-nginx was retired in March 2026 (no further fixes):
+# pick a maintained controller, or prefer the Gateway API version in httproute.yaml.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: app-a                                         # CHANGE: app name
+  namespace: app-a                                    # CHANGE: namespace
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod  # CHANGE: an existing ClusterIssuer (kubectl get clusterissuer)
+spec:
+  ingressClassName: example-ingress-class             # CHANGE: an IngressClass that exists (kubectl get ingressclass)
+  tls:
+    - hosts:
+        - app.example.com                             # CHANGE: becomes the certificate's SAN
+      secretName: app-a-tls                           # cert-manager creates and renews this Secret
+  rules:
+    - host: app.example.com                           # CHANGE: same host as in tls
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: app-a                           # CHANGE: Service from service.yaml
+                port:
+                  name: http

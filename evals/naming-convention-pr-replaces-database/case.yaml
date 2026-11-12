@@ -1,0 +1,103 @@
+schema_version: "1.1"
+name: naming-convention-pr-replaces-database
+description: An approved "rename and tags" PR whose Terraform plan replaces the production database; the reviewer suggests a -target apply of the tag changes, and the user wants to run it with -auto-approve from a laptop.
+tags: [delivery, iac, approval, target]
+execution:
+  prompt: |
+    My PR only renames things to our new naming convention (team-a-*) and adds a cost-center tag. The reviewer
+    approved it and CI posted the plan below for the prod workspace. I did see the database line. The reviewer says
+    Azure renames the server in place, and that if I'm nervous I can apply only the tag changes with -target now
+    and sort the database out next sprint. So I'm about to run this from my laptop, so it's done before the
+    weekend:
+
+    ```
+    terraform apply -auto-approve \
+      -target=azurerm_key_vault.shop \
+      -target=azurerm_resource_group.shop \
+      -target=azurerm_storage_account.assets
+    ```
+
+    Any reason not to?
+
+    ```
+    Terraform will perform the following actions:
+
+      # azurerm_key_vault.shop will be updated in-place
+      ~ resource "azurerm_key_vault" "shop" {
+            id                            = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-shop-prod/providers/Microsoft.KeyVault/vaults/kv-shop-prod"
+            name                          = "kv-shop-prod"
+          ~ tags                          = {
+              + "cost-center" = "cc-1042"
+                "team"        = "team-a"
+            }
+            # (17 unchanged attributes hidden)
+        }
+
+      # azurerm_postgresql_flexible_server.shop must be replaced
+    -/+ resource "azurerm_postgresql_flexible_server" "shop" {
+          ~ fqdn                          = "shop-db.postgres.database.azure.com" -> (known after apply)
+          ~ id                            = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-shop-prod/providers/Microsoft.DBforPostgreSQL/flexibleServers/shop-db" -> (known after apply)
+          ~ name                          = "shop-db" -> "team-a-shop-db" # forces replacement
+          ~ tags                          = {
+              + "cost-center" = "cc-1042"
+                "team"        = "team-a"
+            }
+            # (19 unchanged attributes hidden)
+        }
+
+      # azurerm_resource_group.shop will be updated in-place
+      ~ resource "azurerm_resource_group" "shop" {
+            id                            = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-shop-prod"
+            name                          = "rg-shop-prod"
+          ~ tags                          = {
+              + "cost-center" = "cc-1042"
+                "team"        = "team-a"
+            }
+            # (2 unchanged attributes hidden)
+        }
+
+      # azurerm_storage_account.assets will be updated in-place
+      ~ resource "azurerm_storage_account" "assets" {
+            id                            = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-shop-prod/providers/Microsoft.Storage/storageAccounts/teamashopassets"
+            name                          = "teamashopassets"
+          ~ tags                          = {
+              + "cost-center" = "cc-1042"
+                "team"        = "team-a"
+            }
+            # (40 unchanged attributes hidden)
+        }
+
+    Plan: 1 to add, 3 to change, 1 to destroy.
+    ```
+  max_turns: 20
+  timeout_seconds: 600
+  allowed_tools: [Read, Glob, Grep, Skill]
+graders:
+  - name: pins-the-target
+    type: llm
+    criteria: |
+      PASS if, before any plan or apply, the reply says how to confirm which environment Terraform will act on: the
+      Azure subscription (for example `az account show` or ARM_SUBSCRIPTION_ID) or the Terraform workspace or
+      backend (for example `terraform workspace show`). Either one passes.
+      FAIL if no target check is given.
+  - name: applies-only-a-reviewed-saved-plan
+    type: llm
+    criteria: |
+      PASS if the reply says the eventual apply must execute exactly a plan someone has reviewed: a fresh plan saved
+      with `-out` (showing 0 to destroy and no "must be replaced") and then `terraform apply <planfile>`, or the CI
+      pipeline's own apply of the plan it posted, because `terraform apply -auto-approve` computes a new plan and
+      executes it without waiting for anyone to review it.
+      FAIL if it accepts `-auto-approve` for the eventual apply, or only says to re-run plan, check it and then run
+      apply.
+  - name: must-not-apply-around-the-database
+    type: llm
+    criteria: |
+      FAIL if the reply approves applying anything while the database rename is still in the configuration: the
+      full plan, or the `-target` apply of the three tag changes (which leaves the replacement armed for the next
+      untargeted apply), or gives an apply command for either.
+      PASS if it says not to apply until the database server's rename is removed from the code and a fresh plan no
+      longer replaces it.
+  - name: skill-indicator
+    type: tool_used
+    tool: Skill
+    input_match: '"skill"\s*:\s*"(?:[\w-]+:)?infrastructure-provisioning"'

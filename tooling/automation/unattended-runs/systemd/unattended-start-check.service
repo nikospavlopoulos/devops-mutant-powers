@@ -1,0 +1,7 @@
+# Copy to ~/.config/systemd/user/, set the two paths, then: systemctl --user daemon-reload
+[Unit]
+Description=Alert if an unattended Claude run has not started
+
+[Service]
+Type=oneshot
+ExecStart=%h/path/to/unattended-runs/start-check.sh %h/path/to/run/ledger.md

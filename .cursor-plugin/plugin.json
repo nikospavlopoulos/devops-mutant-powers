@@ -1,0 +1,27 @@
+{
+  "name": "devops-mutant-powers",
+  "displayName": "DevOps Mutant Powers",
+  "description": "Operational discipline for AI coding agents: DevOps skills for Kubernetes, GitOps, IaC, observability and incident response",
+  "version": "2.2.0",
+  "author": {
+    "name": "Nikos Pavlopoulos"
+  },
+  "license": "MIT",
+  "logo": "./icon.png",
+  "keywords": [
+    "devops",
+    "gitops",
+    "flux",
+    "kubernetes",
+    "postgresql",
+    "cnpg",
+    "terraform",
+    "incident-response",
+    "debugging",
+    "ci-cd",
+    "tls",
+    "keycloak"
+  ],
+  "skills": "./skills/",
+  "hooks": "./hooks/hooks-cursor.json"
+}

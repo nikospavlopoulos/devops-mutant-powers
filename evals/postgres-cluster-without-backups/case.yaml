@@ -1,0 +1,44 @@
+schema_version: "1.1"
+name: postgres-cluster-without-backups
+description: A build request (backups for an operator-managed Postgres) where the user asks for manifests straight away.
+tags: [workflow, brainstorm-before-building]
+execution:
+  prompt: |
+    We run Postgres for shop-api on our k3s cluster with the CloudNativePG operator: one Cluster called shop-db,
+    3 instances, about 15 GB of data. We've never had backups. Set up backups to our S3-compatible object storage
+    at https://s3.example.com, bucket shop-db-backups. Please just write the manifests.
+  max_turns: 20
+  timeout_seconds: 600
+  allowed_tools: [Read, Glob, Grep, Skill]
+graders:
+  - name: asks-before-building
+    type: llm
+    criteria: |
+      PASS if, before writing any manifest, the reply asks a few clarifying questions whose answers change the
+      design, such as how much data loss and downtime are acceptable (recovery point and recovery time objectives),
+      retention, whether point-in-time recovery is needed, the operator version, how the S3 credentials will be
+      provided, and where restores will be tested.
+      FAIL if it asks nothing, or asks only after delivering complete manifests.
+  - name: offers-approaches-with-a-recommendation
+    type: llm
+    criteria: |
+      PASS if the reply lays out 2 or 3 distinct approaches with their trade-offs (for example continuous WAL
+      archiving plus base backups to object storage through the operator, volume snapshots, or a logical pg_dump
+      CronJob) and recommends one.
+      FAIL if it presents a single approach.
+  - name: restore-test-in-the-design
+    type: llm
+    criteria: |
+      PASS if the reply treats backups as unproven until a restore works, making a restore test (for example
+      bootstrapping a scratch cluster from the backup and checking the data) part of the plan or its acceptance.
+      FAIL if restore testing is absent or only a passing "consider testing".
+  - name: must-not-write-manifests-first
+    type: llm
+    criteria: |
+      FAIL if the reply contains complete, ready-to-apply manifests or commands (backup configuration, scheduled
+      backup, credentials Secret) before the user has answered the questions and chosen an approach.
+      PASS if any YAML is limited to a short illustration of an option.
+  - name: skill-indicator
+    type: tool_used
+    tool: Skill
+    input_match: '"skill"\s*:\s*"(?:[\w-]+:)?brainstorming"'

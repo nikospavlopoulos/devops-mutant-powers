@@ -1,0 +1,19 @@
+# Daily base backup through the Barman Cloud plugin; WAL archiving runs continuously from cluster.yaml.
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: pg-app-a-daily # CHANGE
+  namespace: <ns> # CHANGE: same namespace as the Cluster
+spec:
+  cluster:
+    name: pg-app-a # CHANGE: Cluster name
+  schedule: "0 0 2 * * *" # CHANGE: SIX fields, seconds first (Go cron) = 02:00:00 daily
+  immediate: true # first backup right after creation, so the PITR window starts now
+  backupOwnerReference: self # Backup objects are owned (and garbage-collected) with this ScheduledBackup
+  target: prefer-standby # default; offloads the base backup from the primary
+  suspend: false
+  method: plugin
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io
+  # In-tree (deprecated since 1.26): replace the two keys above with
+  # method: barmanObjectStore

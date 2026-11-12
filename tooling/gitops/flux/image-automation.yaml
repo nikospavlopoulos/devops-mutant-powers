@@ -1,0 +1,64 @@
+# Image automation chain: ImageRepository -> ImagePolicy (anchored filter + bounded range) -> ImageUpdateAutomation.
+# Setter marker in the app manifest (same line as the value):
+#   image: registry.example.com/team-a/app-a:1.4.2 # {"$imagepolicy": "flux-system:app-a"}
+---
+apiVersion: image.toolkit.fluxcd.io/v1
+kind: ImageRepository
+metadata:
+  name: app-a                                       # CHANGE: one per image path
+  namespace: flux-system                            # CHANGE: same namespace as the policy and automation
+spec:
+  image: registry.example.com/team-a/app-a          # CHANGE: one image path per product line
+  interval: 5m                                      # CHANGE: scan cadence
+  secretRef:
+    name: registry-read                             # CHANGE: docker-registry Secret, read-only pull access
+  exclusionList:
+    - '^.*\.sig$'                                   # setting this list replaces the default; keep cosign .sig excluded
+---
+apiVersion: image.toolkit.fluxcd.io/v1
+kind: ImagePolicy
+metadata:
+  name: app-a                                       # CHANGE: name used in setter markers
+  namespace: flux-system                            # CHANGE: namespace of this object
+  labels:
+    automation: app-a-production                    # CHANGE: matched by the automation's policySelector
+spec:
+  imageRepositoryRef:
+    name: app-a                                     # CHANGE: ImageRepository above
+  filterTags:
+    pattern: '^(?P<version>[0-9]+\.[0-9]+\.[0-9]+)$'  # CHANGE: anchored, one spelling (no optional v), no pre-releases
+    extract: '$version'
+  policy:
+    semver:
+      range: '>=1.4.0 <1.5.0'                       # CHANGE: bounded per environment; never '*' on a shared registry
+---
+apiVersion: image.toolkit.fluxcd.io/v1
+kind: ImageUpdateAutomation
+metadata:
+  name: app-a-production                            # CHANGE: automation name (one per environment)
+  namespace: flux-system                            # CHANGE: namespace of this object
+spec:
+  interval: 30m                                     # CHANGE: also reacts to ImagePolicy changes between intervals
+  sourceRef:
+    kind: GitRepository
+    name: flux-system                               # CHANGE: its credentials must allow push
+  policySelector:
+    matchLabels:
+      automation: app-a-production                  # CHANGE: without a selector, every policy in the namespace applies
+  git:
+    checkout:
+      ref:
+        branch: main                                # CHANGE: branch the automation checks out
+    push:
+      branch: main                                  # CHANGE: or a dedicated branch merged via PR
+    commit:
+      author:
+        name: fluxbot                               # CHANGE: commit author name
+        email: fluxbot@example.com                  # CHANGE: commit author email
+      messageTemplate: |
+        chore(images): {{ .AutomationObject.Name }}
+
+        {{ range .Changed.Changes }}{{ print .OldValue }} -> {{ println .NewValue }}{{ end }}
+  update:
+    path: ./apps/production/app-a                   # CHANGE: narrowest path holding the setter markers
+    strategy: Setters

@@ -1,0 +1,45 @@
+{
+  "name": "devops-mutant-powers",
+  "version": "2.2.0",
+  "description": "Operational discipline for AI coding agents: DevOps skills for Kubernetes, GitOps, IaC, observability and incident response",
+  "author": {
+    "name": "Nikos Pavlopoulos"
+  },
+  "license": "MIT",
+  "keywords": [
+    "devops",
+    "gitops",
+    "flux",
+    "kubernetes",
+    "postgresql",
+    "cnpg",
+    "terraform",
+    "incident-response",
+    "debugging",
+    "ci-cd",
+    "tls",
+    "keycloak"
+  ],
+  "skills": "./skills/",
+  "hooks": {},
+  "interface": {
+    "displayName": "DevOps Mutant Powers",
+    "shortDescription": "DevOps workflows: GitOps, Kubernetes, PostgreSQL, IaC, CI/CD, incidents",
+    "longDescription": "Guides agent work on infrastructure and operations: brainstorming and planning before changes, systematic debugging, incident response, Flux GitOps, Kubernetes, PostgreSQL/CNPG, TLS, identity, IaC, CI/CD and cloud, with verification before completion.",
+    "developerName": "Nikos Pavlopoulos",
+    "category": "Developer Tools",
+    "brandColor": "#13843f",
+    "brandColorDark": "#4be07f",
+    "composerIcon": "./icon-small.png",
+    "logo": "./icon.png",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "This service keeps crashing after the last deploy.",
+      "Let's plan a change to this Kubernetes deployment."
+    ]
+  }
+}

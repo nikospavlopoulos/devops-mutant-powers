@@ -1,0 +1,16 @@
+DevOps Mutant Powers
+Copyright (c) 2026 Nikos Pavlopoulos
+
+The code and documentation in this repository are licensed under the MIT License (see LICENSE), which also keeps
+the copyright notices of obra/superpowers, tspry/superpowers-devops and mattpocock/skills.
+
+Brand files are not covered by the MIT License:
+  - icon.png (the plugin icon)
+  - icon-small.png (Codex's composer icon, the micro mark)
+  - the hero image and the power-family badges shown in README.md, published at
+    https://github.com/nikospavlopoulos/assets
+These are Copyright (c) 2026 Nikos Pavlopoulos and licensed under CC BY-ND 4.0
+(https://creativecommons.org/licenses/by-nd/4.0/): you may share them unchanged, with credit; you may not share
+modified versions. Neither license grants rights in the DevOps Mutant Powers name or logo as trademarks.
+
+Upstream and content sources: README.md, "Lineage and credits", and UPSTREAM.md.

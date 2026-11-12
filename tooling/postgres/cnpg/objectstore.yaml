@@ -1,0 +1,38 @@
+# Barman Cloud plugin object store (CNPG >= 1.26, plugin + cert-manager installed in the operator namespace).
+# Referenced by cluster.yaml (spec.plugins[].parameters.barmanObjectName).
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: pg-app-a-store # CHANGE: must match barmanObjectName in cluster.yaml
+  namespace: <ns> # CHANGE: same namespace as the Cluster
+spec:
+  retentionPolicy: "30d" # CHANGE: PITR window; retention lives here with the plugin, not on the Cluster
+  configuration:
+    destinationPath: s3://<bucket>/<prefix>/ # CHANGE: one bucket/prefix per cluster
+    endpointURL: https://s3.example.com # CHANGE: S3-compatible endpoint; delete the line for AWS S3
+    s3Credentials:
+      # inheritFromIAMRole: true # CHANGE: prefer workload identity (IRSA) and drop the keys below
+      accessKeyId:
+        name: pg-app-a-s3 # CHANGE: Secret holding the key pair
+        key: ACCESS_KEY_ID
+      secretAccessKey:
+        name: pg-app-a-s3 # CHANGE
+        key: ACCESS_SECRET_KEY
+    wal:
+      compression: gzip
+    data:
+      compression: gzip
+# IAM on the bucket/prefix: s3:ListBucket (HeadBucket check), s3:GetObject, s3:PutObject, s3:DeleteObject (retention).
+#
+# In-tree alternative (CNPG < 1.26, or not yet migrated; deprecated since 1.26, removal announced for 1.31):
+# put the same "configuration" block under Cluster.spec.backup.barmanObjectStore, set
+# Cluster.spec.backup.retentionPolicy, remove spec.plugins from cluster.yaml, use a "system" image,
+# and set method: barmanObjectStore in scheduledbackup.yaml.
+#   spec:
+#     backup:
+#       retentionPolicy: "30d" # CHANGE
+#       barmanObjectStore:
+#         destinationPath: s3://<bucket>/<prefix>/ # CHANGE
+#         s3Credentials: {accessKeyId: {name: pg-app-a-s3, key: ACCESS_KEY_ID}, secretAccessKey: {name: pg-app-a-s3, key: ACCESS_SECRET_KEY}} # CHANGE
+#         wal: {compression: gzip}
+#         data: {compression: gzip}

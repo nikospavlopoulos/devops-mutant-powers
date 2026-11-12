@@ -1,0 +1,45 @@
+# Per-route IP allowlist: the admin path gets its own HTTPRoute, and only that route gets the SecurityPolicy.
+# Apply clienttrafficpolicy-client-ip.yaml and prove the client IP first (README.md). Shared clusters: human approval.
+# Guidance: skills/reverse-proxy/references/envoy-gateway.md
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: app-a-admin                              # CHANGE: one route per protected path
+  namespace: app-a                               # CHANGE: app namespace (policy must live here too)
+spec:
+  parentRefs:
+    - name: eg                                   # CHANGE: your Gateway
+      namespace: envoy-gateway-system            # CHANGE: the Gateway's namespace (its allowedRoutes must admit this one)
+      sectionName: https                         # CHANGE: HTTPS listener name; never attach admin routes to plain HTTP
+  hostnames:
+    - app.example.com                            # CHANGE: same host as the public route
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /admin                        # CHANGE: longest prefix wins over the public "/" route
+      backendRefs:
+        - name: app-a                            # CHANGE: Service name
+          port: 8080                             # CHANGE: Service port
+---
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: SecurityPolicy
+metadata:
+  name: app-a-admin-ip-allowlist                 # CHANGE: matches the route it protects
+  namespace: app-a                               # CHANGE: same namespace as the HTTPRoute
+spec:
+  # A route-level SecurityPolicy replaces Gateway-level ones for this route; keep their auth/CORS with mergeType (EG v1.8+).
+  # mergeType: StrategicMerge                    # CHANGE: uncomment if a Gateway-level SecurityPolicy must still apply
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: app-a-admin                          # CHANGE: the admin route above, never the public route
+  authorization:
+    defaultAction: Deny                          # everyone else gets 403 "RBAC: access denied"
+    rules:
+      - name: allow-operators
+        action: Allow
+        principal:
+          clientCIDRs:                           # ranges only; never node/pod CIDRs (a broken client-IP setup would admit everyone)
+            - 203.0.113.0/24                     # CHANGE: office egress range
+            - 198.51.100.0/24                    # CHANGE: VPN egress range

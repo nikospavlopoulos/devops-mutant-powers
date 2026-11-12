@@ -1,0 +1,46 @@
+name: Misbehaviour
+description: A skill did not make the agent behave with discipline
+title: "misbehaviour: "
+labels: ["misbehaviour"]
+body:
+  - type: textarea
+    id: prompt
+    attributes:
+      label: The prompt
+    validations:
+      required: true
+  - type: textarea
+    id: did
+    attributes:
+      label: What the agent did
+    validations:
+      required: true
+  - type: textarea
+    id: disciplined
+    attributes:
+      label: What a disciplined answer would have done
+    validations:
+      required: true
+  - type: input
+    id: skill
+    attributes:
+      label: Which skill, if known
+  - type: dropdown
+    id: harness
+    attributes:
+      label: Harness
+      options:
+        - Claude Code
+        - Antigravity
+        - Codex
+        - Cursor
+        - OpenCode
+    validations:
+      required: true
+  - type: checkboxes
+    id: sanitized
+    attributes:
+      label: Privacy
+      options:
+        - label: I removed secrets, hostnames and private data
+          required: true

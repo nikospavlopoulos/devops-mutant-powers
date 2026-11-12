@@ -1,0 +1,71 @@
+# Deploy an image, pinned by digest, to AKS. Called by docker-build-push.yml or run by hand (workflow_dispatch).
+# Azure auth is GitHub OIDC -> an Entra ID federated credential: no stored cloud secret.
+# If Flux/Argo owns the Deployment, `kubectl set image` is reverted on the next reconcile: commit the digest instead
+# (tooling/gitops/flux/image-automation.yaml).
+name: deploy-k8s
+
+on:
+  workflow_call:
+    inputs:
+      image:
+        description: Image reference pinned by digest (registry/repository@sha256:...)
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      image:
+        description: Image reference pinned by digest (registry/repository@sha256:...)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: production                           # CHANGE: required reviewers; OIDC subject repo:<org>/<repo>:environment:production
+    concurrency:
+      group: deploy-production                        # one rollout at a time per environment
+      cancel-in-progress: false                       # never kill a rollout halfway
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      IMAGE: ${{ inputs.image }}                      # inputs reach scripts via env, never ${{ }} inside run:
+      NAMESPACE: app-a                                # CHANGE
+      DEPLOYMENT: app-a                               # CHANGE
+      CONTAINER: app                                  # CHANGE: container name in the Deployment
+    steps:
+      - name: Require a digest-pinned image
+        run: |
+          if [[ ! "$IMAGE" =~ ^[a-z0-9][a-z0-9./:_-]*@sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::image must be pinned by digest, got: $IMAGE"
+            exit 1
+          fi
+      - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}      # CHANGE: identity with the federated credential and AKS RBAC
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5.1.0
+        with:
+          version: v1.37.1                            # CHANGE: within one minor version of the cluster
+      - uses: azure/use-kubelogin@0ce7c36141aa27d4934872cf00b0120804c98a29 # v1.3
+        with:
+          kubelogin-version: v0.2.20                  # CHANGE
+      - uses: azure/aks-set-context@883bdc8d8d1d0fd87e66cc4ba6f0b618f9eb5281 # v5.0.1
+        with:
+          resource-group: rg-app-a                    # CHANGE
+          cluster-name: aks-app-a                     # CHANGE
+          admin: "false"                              # never the cluster-admin certificate
+          use-kubelogin: "true"                       # Entra ID token of the OIDC identity
+      - id: rollout
+        name: Roll out
+        run: |
+          kubectl -n "$NAMESPACE" set image "deployment/$DEPLOYMENT" "$CONTAINER=$IMAGE"
+          kubectl -n "$NAMESPACE" rollout status "deployment/$DEPLOYMENT" --timeout=5m
+      - name: Roll back a failed rollout
+        if: failure() && steps.rollout.outcome == 'failure'
+        run: kubectl -n "$NAMESPACE" rollout undo "deployment/$DEPLOYMENT"

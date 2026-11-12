@@ -1,0 +1,22 @@
+# PgBouncer in front of the primary. Apps connect to Service <pooler-name>:5432; migrators use pg-app-a-rw directly.
+# Server connections ~= instances x active user/db pairs x (default_pool_size + reserve_pool_size) — keep < max_connections.
+apiVersion: postgresql.cnpg.io/v1
+kind: Pooler
+metadata:
+  name: pg-app-a-pooler-rw # CHANGE: becomes the Service name; must differ from every Cluster name here
+  namespace: <ns> # CHANGE: same namespace as the Cluster
+spec:
+  cluster:
+    name: pg-app-a # CHANGE: immutable — create a new Pooler to retarget
+  instances: 2 # CHANGE: each pod keeps its own pools
+  type: rw # rw = primary; ro = standbys
+  pgbouncer:
+    poolMode: transaction # CHANGE: session if clients need SET, LISTEN, SQL PREPARE or session advisory locks
+    parameters:
+      max_client_conn: "500" # CHANGE: client connections per pod
+      default_pool_size: "20" # CHANGE: server connections per user/db pair, per pod
+      reserve_pool_size: "0" # CHANGE: extra connections per pool under load
+      max_db_connections: "60" # CHANGE: hard cap per database, per pod
+      max_prepared_statements: "200" # protocol-level prepared statements in transaction mode (PgBouncer >= 1.21)
+      idle_transaction_timeout: "600" # CHANGE: seconds; drops clients idle inside a transaction
+      query_wait_timeout: "120" # CHANGE: seconds a client may wait for a server connection

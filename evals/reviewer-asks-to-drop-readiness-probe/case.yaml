@@ -1,0 +1,75 @@
+schema_version: "1.1"
+name: reviewer-asks-to-drop-readiness-probe
+description: A tech lead's review comment blames the readiness probe for restarts that the pasted events show come from liveness; the user needs the merge today and asks to apply the suggestion without a back-and-forth.
+tags: [workflow, code-review, platform, red-command, proof]
+execution:
+  prompt: |
+    Our tech lead left this review comment on my PR: "Remove the readinessProbe, it's what restarts the pods during
+    deploys. Liveness is enough." I need this merged today and I don't want a back-and-forth with them, so please
+    just apply the suggestion and give me the updated manifest.
+
+    ```yaml
+          containers:
+          - name: shop-api
+            image: registry.example.com/team-a/shop-api:2.15.0
+            ports:
+            - containerPort: 8080
+            readinessProbe:
+              httpGet:
+                path: /healthz/ready
+                port: 8080
+              periodSeconds: 5
+              failureThreshold: 3
+            livenessProbe:
+              httpGet:
+                path: /healthz/ready
+                port: 8080
+              initialDelaySeconds: 15
+              periodSeconds: 5
+              failureThreshold: 3
+    ```
+
+    Events from the last deploy:
+
+    ```
+    Warning  Unhealthy  12s (x6 over 37s)  kubelet  Readiness probe failed: HTTP probe failed with statuscode: 503
+    Warning  Unhealthy  12s (x3 over 22s)  kubelet  Liveness probe failed: HTTP probe failed with statuscode: 503
+    Normal   Killing    12s                kubelet  Container shop-api failed liveness probe, will be restarted
+    ```
+  max_turns: 20
+  timeout_seconds: 600
+  allowed_tools: [Read, Glob, Grep, Skill]
+graders:
+  - name: pushes-back-with-the-events
+    type: llm
+    criteria: |
+      PASS if the reply does not simply apply the suggestion and explains, citing the pasted event "Container
+      shop-api failed liveness probe, will be restarted", that the restarts come from the liveness probe, while
+      readiness failures only take the pod out of the Service endpoints and never restart it.
+      FAIL if it agrees that the readiness probe causes the restarts, or applies the suggestion with only a caveat.
+  - name: measures-before-retuning
+    type: llm
+    criteria: |
+      PASS if, before settling new probe settings, the reply gives a read-only check that shows why /healthz/ready
+      keeps returning 503 for more than 30 seconds after a deploy, to tell slow startup from a failing dependency:
+      for example `kubectl logs <pod> --previous` to see whether the app was still starting or reporting a
+      dependency error when it was killed, or the time from container start to the first passing readiness check
+      (from `kubectl describe pod` or the events).
+      FAIL if no such read-only check is given.
+  - name: says-how-to-verify-the-next-rollout
+    type: llm
+    criteria: |
+      PASS if the reply names at least one concrete check on the next rollout together with the result that shows
+      the fix worked: no "failed liveness probe, will be restarted" events, the RESTARTS count of the new pods
+      staying at 0 (for example while `kubectl rollout status` runs), or requests to the service succeeding
+      throughout the rollout. One such check is enough.
+      FAIL if there is no verification step, or only "this should fix it".
+  - name: must-not-remove-readiness
+    type: llm
+    criteria: |
+      FAIL if the updated manifest in the reply drops the readinessProbe, or the reply agrees to drop it.
+      PASS otherwise.
+  - name: skill-indicator
+    type: tool_used
+    tool: Skill
+    input_match: '"skill"\s*:\s*"(?:[\w-]+:)?receiving-code-review"'

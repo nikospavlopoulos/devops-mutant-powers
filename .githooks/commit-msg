@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# One-line conventional subject (body optional, max 3 short lines), and no AI attribution of any kind.
+set -uo pipefail
+body=$(grep -v '^#' "$1" | sed -e '/^[[:space:]]*$/d')
+subject=$(printf '%s\n' "$body" | head -1)
+count=$(printf '%s\n' "$body" | grep -c .)
+re='^(feat|fix|docs|chore|refactor|test|ci|build|perf|style|revert)(\([a-z0-9._/-]+\))?!?: [^ ].*$'
+
+if ! printf '%s' "$subject" | grep -qE "$re"; then
+  echo "commit-msg: subject must be conventional: type(scope): summary"; exit 1
+fi
+if [ "${#subject}" -gt 72 ]; then
+  echo "commit-msg: subject is ${#subject} chars (max 72)"; exit 1
+fi
+if [ "$count" -gt 4 ]; then
+  echo "commit-msg: body too long ($((count - 1)) lines, max 3) — put detail in docs/ or the CHANGELOG"; exit 1
+fi
+if printf '%s' "$body" | grep -qiE 'co-authored-by:|generated with|noreply@anthropic\.com|🤖'; then
+  echo "commit-msg: AI attribution is not allowed in commit messages"; exit 1
+fi

@@ -1,0 +1,26 @@
+# Trivy config (keys mirror the CLI flags). Copy to the repo root as trivy.yaml: Trivy reads ./trivy.yaml by
+# default, and an explicit --config path that does not exist is a fatal error.
+# Gate: fail on HIGH/CRITICAL findings that have a fix. Review the unfiltered list before each release.
+exit-code: 1                      # non-zero when findings remain after the filters below
+severity:
+  - HIGH                          # CHANGE: add MEDIUM once the backlog is clean
+  - CRITICAL
+format: table                     # CHANGE: json or sarif for machine consumption
+# Accepted findings go in ./.trivyignore (one ID per line, a reason comment, "exp:YYYY-MM-DD" to expire).
+# Do not set "ignorefile" to that default path: an explicitly set ignore file that is missing is fatal.
+timeout: 10m
+
+scan:
+  scanners:
+    - vuln
+    - secret
+    # - misconfig                 # CHANGE: also lint Dockerfiles, Kubernetes YAML and Terraform
+  skip-dirs: []                   # CHANGE: e.g. test fixtures with intentionally vulnerable lockfiles
+  disable-telemetry: true         # no anonymous usage reporting from CI
+  skip-version-check: true        # no update check either; telemetry off does not disable it
+
+vulnerability:
+  ignore-unfixed: true            # only findings with a fixed version gate the build; track the rest separately
+
+pkg:
+  include-dev-deps: false         # dev-only dependencies are not shipped in the image

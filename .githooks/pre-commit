@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Privacy + structure gate for every commit. Validates the staged snapshot, not the working tree. Never bypass.
+set -uo pipefail
+ROOT="$(git rev-parse --show-toplevel)"
+fail=0
+
+if git -C "$ROOT" diff --cached --check 2>&1 | grep -qi 'conflict marker'; then
+  echo "pre-commit: leftover conflict markers in staged changes"; fail=1
+fi
+bash "$ROOT/scripts/scan-sensitive.sh" --staged || fail=1
+snap=$(mktemp -d)
+git -C "$ROOT" checkout-index -a --prefix="$snap/"
+python3 -I "$snap/tests/validate.py" > "$snap.log" 2>&1 || { cat "$snap.log"; fail=1; }
+rm -rf "${snap:?}" "${snap:?}.log"
+
+[ "$fail" -eq 0 ] || { echo "pre-commit: BLOCKED"; exit 1; }

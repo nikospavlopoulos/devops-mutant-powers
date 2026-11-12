@@ -1,0 +1,19 @@
+# gitleaks config: the built-in rules plus a narrow, reviewed allowlist.
+# Copy to .gitleaks.toml at the repo root (loaded automatically from the scan target) or pass --config.
+# Allowlist exact placeholders and fixture paths only; a broad regex here hides real leaks.
+title = "app-a gitleaks config"         # CHANGE
+
+[extend]
+useDefault = true                       # keep every built-in rule; updates arrive with the gitleaks version
+# disabledRules = ["generic-api-key"]   # CHANGE: only with a written reason
+
+# gitleaks >= 8.25 syntax. Older releases ignore this table silently: use a single [allowlist] table there.
+[[allowlists]]
+description = "Documentation placeholders and synthetic test fixtures"   # CHANGE
+paths = [
+  '''(^|/)testdata/''',                 # CHANGE: fixture directories with fake credentials
+]
+regexes = [
+  '''^CHANGE_ME$''',                    # placeholder values used in templates
+  '''^<REDACTED>$''',
+]

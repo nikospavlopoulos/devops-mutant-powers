@@ -1,0 +1,73 @@
+# HelmRelease with pinned chart, bounded remediation, drift detection and watched valuesFrom.
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: app-a-charts                      # CHANGE: repository object name
+  namespace: app-a                        # CHANGE: app namespace
+spec:
+  interval: 1h                            # CHANGE: index refresh cadence
+  url: https://charts.example.com         # CHANGE: chart repository URL (use OCIRepository for oci:// charts)
+  # secretRef:
+  #   name: app-a-charts-auth             # CHANGE: only for private repositories
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-a-values                      # CHANGE: environment values
+  namespace: app-a                        # CHANGE: namespace of this object
+  labels:
+    reconcile.fluxcd.io/watch: Enabled    # helm-controller upgrades on change instead of at the next interval
+data:
+  values.yaml: |
+    replicaCount: 2                       # CHANGE: environment-specific values live here
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: app-a                             # CHANGE: HelmRelease name
+  namespace: app-a                        # CHANGE: namespace of this object
+spec:
+  interval: 30m                           # CHANGE: also the drift-detection cadence
+  timeout: 10m                            # CHANGE: per Helm action incl. hooks
+  releaseName: app-a                      # CHANGE: pin it; the default is [targetNamespace-]name
+  maxHistory: 5                           # Helm revisions kept (default 5; 0 = unlimited, avoid)
+  chart:
+    spec:
+      chart: app-a                        # CHANGE: chart name in the repository
+      version: "1.2.3"                    # CHANGE: exact version; bump in Git after the major-bump checklist
+      sourceRef:
+        kind: HelmRepository
+        name: app-a-charts                # CHANGE: HelmRepository above
+      interval: 1h                        # CHANGE: chart re-check cadence
+  # dependsOn:
+  #   - name: app-a-db                    # CHANGE: HelmReleases that must be Ready first
+  install:
+    remediation:
+      retries: 3                          # CHANGE: failed install -> uninstall -> retry, N times
+  upgrade:
+    cleanupOnFail: true                   # delete resources created by a failed upgrade
+    remediation:
+      retries: 3                          # CHANGE: failed upgrade -> rollback -> retry, N times
+      strategy: rollback                  # rollback | uninstall
+      remediateLastFailure: true          # also roll back after the last retry
+  # Flux >= 2.7, for workloads that must not roll back (e.g. StatefulSets) -- replaces the remediation blocks:
+  # install:
+  #   strategy:
+  #     name: RetryOnFailure
+  #     retryInterval: 5m                 # CHANGE: retry cadence after a failure
+  # upgrade:
+  #   strategy:
+  #     name: RetryOnFailure
+  #     retryInterval: 5m                 # CHANGE: retry cadence after a failure
+  driftDetection:
+    mode: enabled                         # enabled corrects drift, warn only reports; default is disabled
+    ignore:
+      - paths: ["/spec/replicas"]         # CHANGE: drop if no HPA owns replicas
+        target:
+          kind: Deployment
+  valuesFrom:
+    - kind: ConfigMap
+      name: app-a-values                  # CHANGE: must carry the watch label above
+      valuesKey: values.yaml
+  # values: {}                            # inline values override valuesFrom; keep environment values in the ConfigMap

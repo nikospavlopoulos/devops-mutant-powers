@@ -1,0 +1,18 @@
+<!-- Companion fragment: compare two to four design options side by side. Copy into screen_dir as a new file. -->
+<h2>Where should TLS end?</h2>
+<p class="subtitle">Three ways to route shop.example.com. Click one, or several to compare; then tell me in the terminal.</p>
+<div class="options">
+  <div class="option" data-choice="gateway" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content"><h3>At the gateway (recommended)</h3><p>CDN → Envoy Gateway (TLS ends) → Service. One certificate to renew, one place for headers and limits.</p></div>
+  </div>
+  <div class="option" data-choice="passthrough" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content"><h3>Passthrough to the pod</h3><p>The gateway forwards encrypted traffic; each app holds its certificate. End-to-end encryption, more certificates.</p></div>
+  </div>
+  <div class="option" data-choice="per-namespace" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content"><h3>One gateway per namespace</h3><p>Teams own their entry point; more load balancers and more to patch.</p></div>
+  </div>
+</div>
+<!-- To show a diagram here: write it to the path from "mermaid-view new topology", run "mermaid-view render <that path> <screen_dir>/topology.svg", then use <img src="/files/topology.svg" alt="topology"> -->

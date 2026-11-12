@@ -1,0 +1,12 @@
+# One-shot: set OnCalendar to ~40 min after the planned start, then:
+#   systemctl --user enable --now unattended-start-check.timer ; systemctl --user list-timers
+# Remove it once the run has started (the run's first action does this).
+[Unit]
+Description=One-shot check that an unattended run started
+
+[Timer]
+OnCalendar=2030-01-01 10:45:00
+Persistent=false
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,15 @@
+---
+title: "Rollback sequence"
+---
+sequenceDiagram
+    participant H as Human
+    participant A as Agent
+    participant G as Git main branch
+    participant F as Flux
+    A->>H: Change and rollback plan
+    H->>A: Yes
+    A->>G: Push the change
+    F->>G: Reconcile new revision
+    F-->>A: Ready at new revision
+    A->>H: Proof through the real path
+    Note over H,F: Rollback is git revert, then Flux reconciles again

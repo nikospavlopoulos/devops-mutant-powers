@@ -1,0 +1,8 @@
+{
+  "$schema": "https://antigravity.google/schemas/v1/plugin.json",
+  "name": "devops-mutant-powers",
+  "displayName": "DevOps Mutant Powers",
+  "logo": "./icon.png",
+  "description": "Operational discipline for AI coding agents: DevOps skills for Kubernetes, GitOps, IaC, observability and incident response",
+  "version": "2.2.0"
+}

@@ -1,0 +1,99 @@
+# Stateless HTTP app: restricted-PSS securityContext, probes on a named port, read-only root FS + /tmp emptyDir.
+# Probe sizing: skills/kubernetes/references/probes-and-readiness.md. Image side: skills/container-operations/.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: app-a                                 # CHANGE: one ServiceAccount per workload
+  namespace: app-a                            # CHANGE: namespace
+automountServiceAccountToken: false           # the app does not call the Kubernetes API
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-a                                 # CHANGE: app name
+  namespace: app-a                            # CHANGE: namespace
+  labels:
+    app.kubernetes.io/name: app-a             # CHANGE: app name
+spec:
+  replicas: 2                                 # CHANGE: delete this line when hpa.yaml manages replicas
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: app-a           # immutable after creation: choose it once
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0                       # never below desired capacity during a rollout
+      maxSurge: 25%
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: app-a         # must match the selector
+    spec:
+      serviceAccountName: app-a
+      automountServiceAccountToken: false
+      enableServiceLinks: false               # no docker-link env vars for every Service in the namespace
+      terminationGracePeriodSeconds: 30       # CHANGE: > the app's graceful shutdown time after SIGTERM
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001                      # CHANGE: the image's numeric USER
+        runAsGroup: 10001                     # CHANGE: the image's numeric group
+        seccompProfile:
+          type: RuntimeDefault
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname # spread replicas so one node loss does not take them all
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: app-a
+      containers:
+        - name: app
+          image: registry.example.com/team-a/app-a:1.0.0  # CHANGE: immutable tag or @sha256 digest, never :latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080             # CHANGE: listen port; >= 1024 because the process is not root
+          envFrom:
+            - configMapRef:
+                name: app-a-config            # read at container start only; changes need a rollout restart
+            - secretRef:
+                name: app-a-secrets
+          resources:
+            requests:
+              cpu: 100m                       # CHANGE: from measured usage; HPA utilization is a % of this
+              memory: 128Mi                   # CHANGE
+            limits:
+              memory: 256Mi                   # CHANGE: measured peak + headroom; no CPU limit unless policy demands one
+          startupProbe:
+            httpGet:
+              path: /healthz                  # CHANGE: cheap endpoint, no dependency checks
+              port: http
+            periodSeconds: 5
+            failureThreshold: 24              # CHANGE: 24 x 5 s = 120 s budget for the worst-case start
+          readinessProbe:
+            httpGet:
+              path: /readyz                   # CHANGE: may check what this replica needs to serve traffic
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz                  # CHANGE: never check shared dependencies here (DB down != restart all)
+              port: http
+            periodSeconds: 15
+            timeoutSeconds: 2
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp                 # CHANGE: add a mount for every other path the process writes
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 256Mi                  # CHANGE: exceeding it evicts the pod

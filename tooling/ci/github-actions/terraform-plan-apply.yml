@@ -1,0 +1,93 @@
+# Terraform on Azure: plan on PRs (read-only identity, no state lock); on the default branch plan, gate, then
+# apply the SAME saved plan after environment approval. Auth: GitHub OIDC (ARM_USE_OIDC); the azurerm backend
+# block needs use_oidc = true and use_azuread_auth = true. Identities and subjects: README.md.
+name: terraform
+
+on:
+  pull_request:
+    paths: ["infra/**"]                               # CHANGE: Terraform root directory
+  push:
+    branches: [main]                                  # CHANGE: default branch
+    paths: ["infra/**"]
+
+permissions:
+  contents: read
+
+env:
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+  ARM_USE_OIDC: "true"
+  ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+  ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+defaults:
+  run:
+    working-directory: infra                          # CHANGE: Terraform root directory
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    concurrency:
+      group: terraform-plan-${{ github.ref }}
+      cancel-in-progress: true
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      # PRs: Reader-level identity that cannot take the state lease; default branch: the apply identity.
+      ARM_CLIENT_ID: ${{ github.event_name == 'push' && vars.AZURE_APPLY_CLIENT_ID || vars.AZURE_PLAN_CLIENT_ID }}
+      TF_LOCK: ${{ github.event_name == 'push' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.16.5                   # CHANGE: same version as required_version and local runs
+          terraform_wrapper: false                    # raw exit codes and stdout for the gate
+      - run: terraform fmt -check -recursive
+      - run: terraform init -lockfile=readonly        # fails if .terraform.lock.hcl is missing or stale
+      - run: terraform validate
+      - run: terraform plan -lock="$TF_LOCK" -lock-timeout=5m -out=tfplan
+      - run: terraform show -json tfplan > plan.json
+      - name: Plan gate (destroy/replace of protected types blocks)
+        run: bash "$GITHUB_WORKSPACE/scripts/plan-gate.sh" plan.json  # CHANGE: your copy of tooling/iac/terraform/plan-gate.sh
+      - name: Keep the reviewed plan for the apply job
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: tfplan
+          path: infra/tfplan                          # CHANGE: Terraform root; holds sensitive values in plain text
+          retention-days: 3
+          if-no-files-found: error
+
+  apply:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: production                           # CHANGE: required reviewers read the plan job log first
+    concurrency:
+      group: terraform-apply-production               # a newer pending run replaces an older pending one
+      cancel-in-progress: false                       # never interrupt an apply
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      ARM_CLIENT_ID: ${{ vars.AZURE_APPLY_CLIENT_ID }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.16.5                   # CHANGE: identical to the plan job
+          terraform_wrapper: false
+      - run: terraform init -lockfile=readonly
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: tfplan
+          path: infra                                 # CHANGE: Terraform root
+      - name: Apply exactly the reviewed plan (a stale plan errors; re-run the workflow)
+        run: terraform apply -lock-timeout=5m tfplan

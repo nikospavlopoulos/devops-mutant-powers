@@ -1,0 +1,187 @@
+# VMRule: monitor-the-monitor + standard Kubernetes alert set. Routing is opt-in via the `notify` label.
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMRule
+metadata:
+  name: platform-standard-alerts            # CHANGE
+  namespace: monitoring                     # CHANGE: a namespace the VMAlert ruleNamespaceSelector includes
+  labels:
+    datasource: metrics                     # split from `vlogs` rules via each VMAlert's ruleSelector
+spec:
+  groups:
+    - name: monitor-the-monitor
+      interval: 1m
+      rules:
+        - alert: Heartbeat
+          expr: vector(1)                   # always firing; route to an external dead-man's switch
+          labels:
+            severity: none
+            notify: heartbeat               # CHANGE: receiver that alerts when this STOPS arriving
+          annotations:
+            summary: Alerting pipeline heartbeat
+        - alert: TSDBDiskRunsOutOfSpace
+          expr: |
+            sum(vm_data_size_bytes) by (job, instance)
+              / (sum(vm_free_disk_space_bytes) by (job, instance) + sum(vm_data_size_bytes) by (job, instance)) > 0.8
+          for: 30m
+          labels:
+            severity: warning
+            notify: team-platform           # CHANGE
+          annotations:
+            summary: "{{ $labels.instance }}: TSDB disk above 80 %"
+            runbook_url: https://runbooks.example.com/tsdb-disk   # CHANGE
+        - alert: TSDBReadOnly
+          expr: max(vm_storage_is_read_only) by (job, instance) == 1
+          for: 5m
+          labels:
+            severity: critical
+            notify: team-platform           # CHANGE
+          annotations:
+            summary: "{{ $labels.instance }}: storage is read-only, ingestion stopped"
+        - alert: TSDBRowsRejected
+          expr: sum(rate(vm_rows_ignored_total[5m])) by (job, instance, reason) > 0
+          for: 15m
+          labels:
+            severity: warning
+            notify: team-platform           # CHANGE
+          annotations:
+            summary: "{{ $labels.instance }}: rows rejected ({{ $labels.reason }})"
+        - alert: TSDBIngestionStopped
+          expr: sum(rate(vm_rows_inserted_total[5m])) by (job, instance) == 0
+          for: 10m
+          labels:
+            severity: critical
+            notify: team-platform           # CHANGE
+          annotations:
+            summary: "{{ $labels.instance }}: no samples ingested for 10m"
+        - alert: ScrapeAgentAbsent
+          expr: absent_over_time(up{job="vmagent"}[10m])   # CHANGE: your vmagent job label
+          labels:
+            severity: critical
+            notify: team-platform           # CHANGE
+          annotations:
+            summary: vmagent stopped reporting — every other alert may be blind
+        - alert: AlertNotificationsFailing
+          expr: sum(rate(alertmanager_notifications_failed_total[15m])) by (integration) > 0
+          for: 15m
+          labels:
+            severity: warning
+            notify: heartbeat               # CHANGE: a receiver that does NOT use the failing integration
+          annotations:
+            summary: "Alertmanager cannot deliver via {{ $labels.integration }}"
+
+    - name: kubernetes-workloads
+      interval: 1m
+      rules:
+        - alert: KubePodRestarting
+          expr: increase(kube_pod_container_status_restarts_total[15m]) > 3
+          keep_firing_for: 15m              # damp flapping between restart bursts
+          labels:
+            severity: warning
+            notify: team-a                  # CHANGE: or route per namespace with a relabel/label rule
+          annotations:
+            summary: "{{ $labels.namespace }}/{{ $labels.pod }} ({{ $labels.container }}) restarted > 3 times in 15m"
+        - alert: KubeContainerOOMKilled
+          expr: increase(container_oom_events_total{container!=""}[15m]) > 0
+          labels:
+            severity: warning
+            notify: team-a                  # CHANGE
+          annotations:
+            summary: "{{ $labels.namespace }}/{{ $labels.pod }} ({{ $labels.container }}) OOM-killed"
+        - alert: KubeDeploymentRolloutStuck
+          expr: kube_deployment_status_condition{condition="Progressing", status="false"} == 1
+          for: 5m
+          labels:
+            severity: warning
+            notify: team-a                  # CHANGE
+          annotations:
+            summary: "{{ $labels.namespace }}/{{ $labels.deployment }} rollout not progressing"
+        - alert: KubeNodeNotReady
+          expr: kube_node_status_condition{condition="Ready", status="true"} == 0
+          for: 5m
+          labels:
+            severity: critical
+            notify: team-platform           # CHANGE
+          annotations:
+            summary: "Node {{ $labels.node }} NotReady for 5m"
+
+    - name: storage-and-certificates
+      interval: 5m
+      rules:
+        - alert: NodeFilesystemAlmostFull
+          expr: |
+            node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs"}
+              / node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs"} < 0.10
+          for: 15m
+          labels:
+            severity: warning
+            notify: team-platform           # CHANGE
+          annotations:
+            summary: "{{ $labels.instance }} {{ $labels.mountpoint }}: < 10 % space left"
+        - alert: NodeFilesystemInodesLow
+          expr: |
+            node_filesystem_files_free{fstype!~"tmpfs|overlay|squashfs"}
+              / node_filesystem_files{fstype!~"tmpfs|overlay|squashfs"} < 0.10
+          for: 15m
+          labels:
+            severity: warning
+            notify: team-platform           # CHANGE
+          annotations:
+            summary: "{{ $labels.instance }} {{ $labels.mountpoint }}: < 10 % inodes left"
+        - alert: KubePersistentVolumeAlmostFull
+          expr: kubelet_volume_stats_available_bytes / (kubelet_volume_stats_capacity_bytes > 0) < 0.10
+          for: 15m
+          labels:
+            severity: warning
+            notify: team-a                  # CHANGE
+          annotations:
+            summary: "PVC {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }}: < 10 % space left"
+        - alert: KubePersistentVolumeInodesLow
+          expr: kubelet_volume_stats_inodes_free / (kubelet_volume_stats_inodes > 0) < 0.10
+          for: 15m
+          labels:
+            severity: warning
+            notify: team-a                  # CHANGE
+          annotations:
+            summary: "PVC {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }}: < 10 % inodes left"
+        - alert: EtcdDatabaseNearQuota      # CHANGE: delete on clusters without etcd metrics
+          expr: etcd_mvcc_db_total_size_in_bytes / (etcd_server_quota_backend_bytes > 0) > 0.8
+          for: 15m
+          labels:
+            severity: warning
+            notify: team-platform           # CHANGE
+          annotations:
+            summary: "{{ $labels.instance }}: etcd DB above 80 % of quota"
+        - alert: KubeDatastoreLarge          # kube-apiserver metric: covers etcd and kine (k3s) alike
+          expr: max by (storage_cluster_id) (apiserver_storage_size_bytes) > 0.8 * 2147483648   # CHANGE: 80 % of etcd's 2 GiB default quota; for kine, well above its normal size
+          for: 30m
+          labels:
+            severity: warning
+            notify: team-platform           # CHANGE
+          annotations:
+            summary: "API datastore {{ $labels.storage_cluster_id }} is {{ $value | humanize1024 }}B — find the writer before compacting"
+        - alert: LonghornDiskUnschedulable  # CHANGE: delete when Longhorn is not installed
+          expr: max by (node, disk) (longhorn_disk_status{condition="schedulable"}) == 0
+          for: 15m
+          labels:
+            severity: warning
+            notify: team-platform           # CHANGE
+          annotations:
+            summary: "Longhorn disk {{ $labels.node }}/{{ $labels.disk }} no longer accepts replicas"
+        # Lifetime-agnostic: a fixed "< N days" fires on every healthy short-lived (45-day, 160-hour) certificate.
+        - alert: CertificateRenewalOverdue
+          expr: time() - certmanager_certificate_renewal_timestamp_seconds > 6 * 3600 and certmanager_certificate_renewal_timestamp_seconds > 0
+          for: 15m
+          labels:
+            severity: warning
+            notify: team-platform           # CHANGE
+          annotations:
+            summary: "Certificate {{ $labels.namespace }}/{{ $labels.name }} is more than 6 h past its renewal time"
+        - alert: ServedCertificateExpiringSoon
+          # blackbox probe = what clients see; keep below the renewal point of the shortest lifetime served
+          expr: (probe_ssl_earliest_cert_expiry - time()) / 86400 < 10   # CHANGE: days
+          for: 1h
+          labels:
+            severity: warning
+            notify: team-platform           # CHANGE
+          annotations:
+            summary: "{{ $labels.instance }} serves a certificate expiring in < 10 days"

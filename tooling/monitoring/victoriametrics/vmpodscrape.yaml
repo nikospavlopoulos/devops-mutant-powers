@@ -1,0 +1,30 @@
+# VMPodScrape: scrape pods directly by container port NAME (no Service needed).
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMPodScrape
+metadata:
+  name: app-a                               # CHANGE: one object per app
+  namespace: app-a                          # CHANGE: the VMAgent's podScrapeNamespaceSelector must include it
+  labels:
+    app.kubernetes.io/name: app-a           # CHANGE: add the label your VMAgent podScrapeSelector expects, if any
+spec:
+  jobLabel: app.kubernetes.io/name          # job = value of this pod label
+  namespaceSelector:
+    matchNames:
+      - app-a                               # CHANGE: namespaces holding the pods
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: app-a         # CHANGE: POD labels (not Deployment labels)
+  podMetricsEndpoints:
+    - port: metrics                         # CHANGE: containerPorts[].name — must be named; or use portNumber
+      path: /metrics                        # CHANGE: metrics path
+      interval: 30s                         # CHANGE: scrape interval; rate() windows must be >= 2x this
+      scrapeTimeout: 10s                    # CHANGE: below interval
+      sampleLimit: 20000                    # CHANGE: per-scrape cap against a cardinality explosion
+      filterRunning: true                   # default true: skip Failed/Succeeded pods
+      relabelConfigs:
+        - sourceLabels: [__meta_kubernetes_pod_node_name]
+          targetLabel: node                 # keep label count small; avoid labelmap of all pod labels
+      metricRelabelConfigs:
+        - sourceLabels: [__name__]
+          regex: go_gc_duration_seconds.*   # CHANGE: drop series you never query
+          action: drop

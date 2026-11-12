@@ -1,0 +1,8 @@
+# Reviewed false positives (gitleaks fingerprints). Each entry needs a one-line reason.
+# Baseline c073ab1: public tspry example nginx upstream IPs in load-balancing (rewritten to RFC 5737 in the next commits).
+c073ab10890830b5b0a454c536bd9f5640402584:skills/load-balancing/SKILL.md:private-ipv4-host:27
+c073ab10890830b5b0a454c536bd9f5640402584:skills/load-balancing/SKILL.md:private-ipv4-host:28
+c073ab10890830b5b0a454c536bd9f5640402584:skills/load-balancing/SKILL.md:private-ipv4-host:29
+c073ab10890830b5b0a454c536bd9f5640402584:skills/load-balancing/SKILL.md:private-ipv4-host:49
+c073ab10890830b5b0a454c536bd9f5640402584:skills/load-balancing/SKILL.md:private-ipv4-host:76
+c073ab10890830b5b0a454c536bd9f5640402584:skills/load-balancing/SKILL.md:private-ipv4-host:77

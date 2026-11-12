@@ -1,0 +1,33 @@
+<!-- Companion fragment: how an alert notification will read in a chat channel. Copy into screen_dir as a new file. -->
+<h2>Alert message preview</h2>
+<p class="subtitle">What on-call sees for a 5xx burst. Pick the wording that gets them to act fastest.</p>
+<style>
+  .msg { border-left: 4px solid #c62828; background: #fff; border-radius: 4px; padding: 10px 12px; margin: 8px 0; font-family: sans-serif; }
+  .msg.warn { border-left-color: #b58100; }
+  .msg .who { font-weight: 600; } .msg .when { color: #6b7280; font-size: 12px; margin-left: 6px; }
+  .msg .title { font-weight: 600; margin: 4px 0; }
+  .msg .labels span { display: inline-block; background: #eef1f5; border-radius: 3px; padding: 1px 6px; margin: 2px 4px 2px 0; font-size: 12px; }
+  .msg .actions a { margin-right: 12px; font-size: 13px; }
+</style>
+<div class="cards">
+  <div class="card" data-choice="short" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="msg"><span class="who">alertmanager</span><span class="when">10:04</span>
+        <div class="title">🔥 FIRING: ShopApi5xxBurst (critical)</div>
+        <div>5xx ratio 7.2 % for 5 min on shop-api (threshold 5 %).</div>
+        <div class="labels"><span>env=production</span><span>service=shop-api</span><span>team=platform</span></div>
+        <div class="actions"><a href="#">Runbook</a><a href="#">Dashboard</a><a href="#">Silence 1 h</a></div></div>
+    </div>
+    <div class="card-body"><h3>A: short, links first</h3><p>One line of evidence, then the three actions.</p></div>
+  </div>
+  <div class="card" data-choice="context" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="msg"><span class="who">alertmanager</span><span class="when">10:04</span>
+        <div class="title">🔥 ShopApi5xxBurst: customers see errors on checkout</div>
+        <div>Since 09:59: 7.2 % of requests fail (normal under 0.5 %). Started 2 min after deploy 2.4.1.</div>
+        <div>First check: <code>kubectl -n shop rollout history deploy/shop-api</code></div>
+        <div class="actions"><a href="#">Runbook</a><a href="#">Dashboard</a><a href="#">Silence 1 h</a></div></div>
+    </div>
+    <div class="card-body"><h3>B: impact and first step</h3><p>Says who is hurt, what changed and what to run first.</p></div>
+  </div>
+</div>
